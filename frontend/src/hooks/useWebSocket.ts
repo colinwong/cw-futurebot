@@ -5,6 +5,7 @@ import type { WSMessage, WSEventType } from "@/lib/types";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8002/api/ws";
 const RECONNECT_DELAY = 3000;
+const BUFFER_MAX = 50;
 
 type MessageHandler = (data: unknown) => void;
 
@@ -14,6 +15,18 @@ let wsConnected = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const handlers = new Map<WSEventType, Set<MessageHandler>>();
 const connectedListeners = new Set<() => void>();
+
+// Client-side event buffer — survives page navigations within the SPA
+const eventBuffer = new Map<WSEventType, unknown[]>();
+const BUFFERED_TYPES: WSEventType[] = ["news", "signal"];
+
+function bufferEvent(type: WSEventType, data: unknown) {
+  if (!BUFFERED_TYPES.includes(type)) return;
+  if (!eventBuffer.has(type)) eventBuffer.set(type, []);
+  const buf = eventBuffer.get(type)!;
+  buf.push(data);
+  if (buf.length > BUFFER_MAX) buf.shift();
+}
 
 function notifyConnectedListeners() {
   connectedListeners.forEach((l) => l());
@@ -27,7 +40,7 @@ function connect() {
   ws.onopen = () => {
     wsConnected = true;
     notifyConnectedListeners();
-    // Request buffered events after React components have mounted their subscriptions
+    // Request buffered events from backend after React components mount
     setTimeout(() => {
       if (ws?.readyState === WebSocket.OPEN) ws.send("replay");
     }, 500);
@@ -40,6 +53,7 @@ function connect() {
   ws.onmessage = (event) => {
     try {
       const msg: WSMessage = JSON.parse(event.data);
+      bufferEvent(msg.type, msg.data);
       const typeHandlers = handlers.get(msg.type);
       if (typeHandlers) {
         typeHandlers.forEach((handler) => handler(msg.data));
@@ -80,6 +94,14 @@ export function useWebSocket() {
       handlers.set(type, new Set());
     }
     handlers.get(type)!.add(handler);
+
+    // Immediately replay buffered events to the new handler
+    const buffered = eventBuffer.get(type);
+    if (buffered) {
+      for (const data of buffered) {
+        handler(data);
+      }
+    }
 
     return () => {
       handlers.get(type)?.delete(handler);
