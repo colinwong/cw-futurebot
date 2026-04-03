@@ -110,6 +110,17 @@ export function getStatus() {
   }>("/api/status");
 }
 
+// Logs
+export function getLogs(limit = 200) {
+  return fetchApi<{
+    entries: Array<{
+      timestamp: string;
+      type: string;
+      message: string;
+    }>;
+  }>(`/api/logs?limit=${limit}`);
+}
+
 // Settings
 export function getSettings() {
   return fetchApi<{

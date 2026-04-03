@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ib_insync import IB
 
-from src.api.routes import market_data, orders, positions
+from src.api.routes import logs, market_data, orders, positions
 from src.broker.ib_broker import IBBroker
 from src.api.routes import settings as settings_routes
 from src.api.routes import signals, strategy, trades, ws
@@ -368,6 +368,7 @@ app.add_middleware(
 # Register routes
 app.include_router(trades.router)
 app.include_router(positions.router)
+app.include_router(logs.router)
 app.include_router(orders.router)
 app.include_router(signals.router)
 app.include_router(market_data.router)
