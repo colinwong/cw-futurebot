@@ -41,7 +41,7 @@ export default function TradesPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-500 border-b border-gray-800">
-                  <th className="text-left py-1">Time</th>
+                  <th className="text-left py-1">Exit Time</th>
                   <th className="text-left">Symbol</th>
                   <th className="text-left">Direction</th>
                   <th className="text-right">Entry</th>

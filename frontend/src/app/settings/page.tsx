@@ -159,15 +159,15 @@ export default function SettingsPage() {
     const isChanged = values[key] !== meta.value;
 
     return (
-      <div key={key} className="flex items-center justify-between py-1.5">
+      <div key={key} className="flex items-center py-1.5 gap-2">
         <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0 w-56">
           {meta.label}
           <Tooltip text={meta.tooltip} />
         </div>
-        <div className="w-48">
+        <div className="w-48 shrink-0">
           {renderInput(key)}
         </div>
-        {isChanged && <span className="text-yellow-400 text-xs ml-2">*</span>}
+        <span className={`text-yellow-400 text-xs w-3 ${isChanged ? "" : "invisible"}`}>*</span>
       </div>
     );
   };
@@ -184,8 +184,8 @@ export default function SettingsPage() {
           )}
           <button
             onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
+            disabled={saving || Object.entries(values).every(([key, val]) => settings[key]?.value === val)}
+            className="px-4 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? "Saving..." : "Save Changes"}
           </button>

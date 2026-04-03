@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { formatTime } from "@/lib/timezone";
+import { formatDateTime } from "@/lib/timezone";
 import type { NewsEvent, ImpactRating, Sentiment } from "@/lib/types";
 
 const impactColors: Record<ImpactRating, string> = {
@@ -25,7 +25,12 @@ export default function NewsFeed() {
   useEffect(() => {
     const unsub = subscribe("news", (data) => {
       const item = data as NewsEvent;
-      setNews((prev) => [item, ...prev].slice(0, 50));
+      setNews((prev) => {
+        const updated = [item, ...prev.filter((n) => n.id !== item.id)].slice(0, 50);
+        // Sort by article timestamp, newest first
+        updated.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        return updated;
+      });
     });
     return unsub;
   }, [subscribe]);
@@ -41,7 +46,7 @@ export default function NewsFeed() {
             <div key={item.id} className="text-xs border-b border-gray-800 pb-1.5">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-gray-500">
-                  {formatTime(item.timestamp)}
+                  {formatDateTime(item.timestamp)}
                 </span>
                 <span
                   className={`px-1 py-0.5 rounded text-xs ${impactColors[item.impact_rating]}`}
