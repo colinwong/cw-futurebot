@@ -94,3 +94,18 @@ export function getSignals(params?: { symbol?: string; strategy?: string; action
 export function getHealth() {
   return fetchApi<{ status: string }>("/health");
 }
+
+// Status (includes IB connection + account info)
+export function getStatus() {
+  return fetchApi<{
+    ib_connected: boolean;
+    ib_account: string | null;
+    account: {
+      balance: number;
+      unrealized_pnl: number;
+      realized_pnl: number;
+      margin_used: number;
+      buying_power: number;
+    } | null;
+  }>("/api/status");
+}

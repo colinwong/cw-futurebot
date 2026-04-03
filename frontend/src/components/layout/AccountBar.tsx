@@ -2,12 +2,35 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { getStatus } from "@/lib/api";
 import type { AccountInfo } from "@/lib/types";
 
 export default function AccountBar() {
-  const { connected, subscribe } = useWebSocket();
+  const { connected: wsConnected, subscribe } = useWebSocket();
   const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [ibConnected, setIbConnected] = useState(false);
+  const [ibAccount, setIbAccount] = useState<string | null>(null);
 
+  // Poll status endpoint every 10s
+  useEffect(() => {
+    const fetchStatus = () => {
+      getStatus()
+        .then((res) => {
+          setIbConnected(res.ib_connected);
+          setIbAccount(res.ib_account);
+          if (res.account) {
+            setAccount(res.account);
+          }
+        })
+        .catch(() => setIbConnected(false));
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Also update account from WebSocket events
   useEffect(() => {
     const unsub = subscribe("account", (data) => {
       setAccount(data as AccountInfo);
@@ -48,11 +71,25 @@ export default function AccountBar() {
           <span className="font-mono">${account?.margin_used?.toLocaleString() ?? "—"}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <div
-          className={`w-2 h-2 rounded-full ${connected ? "bg-green-500" : "bg-red-500"}`}
-        />
-        <span className="text-gray-500 text-xs">{connected ? "Connected" : "Disconnected"}</span>
+      <div className="flex items-center gap-4">
+        {/* IB Gateway status */}
+        <div className="flex items-center gap-1.5">
+          <div
+            className={`w-2 h-2 rounded-full ${ibConnected ? "bg-green-500" : "bg-red-500"}`}
+          />
+          <span className="text-gray-500 text-xs">
+            IB {ibConnected ? (ibAccount ?? "Connected") : "Disconnected"}
+          </span>
+        </div>
+        {/* WebSocket status */}
+        <div className="flex items-center gap-1.5">
+          <div
+            className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-500" : "bg-red-500"}`}
+          />
+          <span className="text-gray-500 text-xs">
+            WS {wsConnected ? "Connected" : "Disconnected"}
+          </span>
+        </div>
       </div>
     </div>
   );

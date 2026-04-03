@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -97,22 +97,44 @@ export default function TradingChart({
       chartRef.current = null;
       candleSeriesRef.current = null;
       markersRef.current = null;
+      initialLoadDone.current = false;
+      prevLengthRef.current = 0;
     };
   }, [height]);
 
-  // Update candle data
+  // Set initial data or update last candle efficiently
+  const prevLengthRef = useRef(0);
+  const initialLoadDone = useRef(false);
   useEffect(() => {
-    if (!candleSeriesRef.current || candles.length === 0) return;
+    if (!candleSeriesRef.current || !chartRef.current || candles.length === 0) return;
 
-    const data: CandlestickData<Time>[] = candles.map((c) => ({
-      time: c.time as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    candleSeriesRef.current.setData(data);
+    if (!initialLoadDone.current || candles.length < prevLengthRef.current) {
+      // Full data load (initial or timeframe change)
+      const data: CandlestickData<Time>[] = candles.map((c) => ({
+        time: c.time as Time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+      candleSeriesRef.current.setData(data);
+      // Show all historical data, scrolled to the right
+      chartRef.current.timeScale().fitContent();
+      initialLoadDone.current = true;
+    } else {
+      // Incremental update — just update the last candle
+      const last = candles[candles.length - 1];
+      candleSeriesRef.current.update({
+        time: last.time as Time,
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close,
+      });
+      // Keep the chart scrolled to show the latest candle without resetting zoom
+      chartRef.current.timeScale().scrollToRealTime();
+    }
+    prevLengthRef.current = candles.length;
   }, [candles]);
 
   // Update markers (entry/exit arrows, signal diamonds)

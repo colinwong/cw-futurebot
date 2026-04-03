@@ -1,16 +1,11 @@
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime
 
+from fastapi import APIRouter, Query
+
+from src.contracts import make_ib_contract
 from src.db.models import SymbolEnum
 
 router = APIRouter(prefix="/api/market-data", tags=["market-data"])
-
-# Market data instance will be set during app startup
-_market_data = None
-
-
-def set_market_data(market_data):
-    global _market_data
-    _market_data = market_data
 
 
 @router.get("/{symbol}/candles")
@@ -20,23 +15,37 @@ async def get_candles(
     duration: str = Query("1 D", description="Duration: '1 D', '2 D', '1 W'"),
 ):
     """Get historical candles for chart initialization."""
-    if not _market_data:
-        return {"candles": [], "error": "Market data not connected"}
+    from src.main import ib, run_ib
+
+    if not ib or not ib.isConnected():
+        return {"candles": [], "error": "IB not connected"}
 
     sym = SymbolEnum(symbol)
-    bars = await _market_data.get_historical_bars(sym, bar_size, duration)
+    contract = make_ib_contract(sym)
+
+    await run_ib(ib.qualifyContracts, contract)
+    bars = await run_ib(
+        ib.reqHistoricalData,
+        contract,
+        endDateTime="",
+        durationStr=duration,
+        barSizeSetting=bar_size,
+        whatToShow="TRADES",
+        useRTH=False,
+        formatDate=2,
+    )
 
     return {
         "symbol": symbol,
         "bar_size": bar_size,
         "candles": [
             {
-                "time": int(bar.timestamp.timestamp()),
+                "time": int(bar.date.timestamp()) if isinstance(bar.date, datetime) else int(datetime.fromisoformat(str(bar.date)).timestamp()),
                 "open": bar.open,
                 "high": bar.high,
                 "low": bar.low,
                 "close": bar.close,
-                "volume": bar.volume,
+                "volume": int(bar.volume),
             }
             for bar in bars
         ],

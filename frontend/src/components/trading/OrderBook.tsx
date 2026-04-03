@@ -51,7 +51,7 @@ export default function OrderBook() {
                 <span className="text-gray-400">stop {order.stop_price.toFixed(2)}</span>
               )}
               {order.is_manual && (
-                <span className="text-blue-400 text-[10px]">MANUAL</span>
+                <span className="text-blue-400 text-xs">MANUAL</span>
               )}
             </div>
             <button

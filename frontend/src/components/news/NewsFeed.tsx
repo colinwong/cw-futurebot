@@ -43,15 +43,15 @@ export default function NewsFeed() {
                   {new Date(item.timestamp).toLocaleTimeString()}
                 </span>
                 <span
-                  className={`px-1 py-0.5 rounded text-[10px] ${impactColors[item.impact_rating]}`}
+                  className={`px-1 py-0.5 rounded text-xs ${impactColors[item.impact_rating]}`}
                 >
                   {item.impact_rating}
                 </span>
-                <span className={`text-[10px] ${sentimentColors[item.sentiment]}`}>
+                <span className={`text-xs ${sentimentColors[item.sentiment]}`}>
                   {item.sentiment}
                 </span>
                 {item.is_significant && (
-                  <span className="text-[10px] text-yellow-400">★</span>
+                  <span className="text-xs text-yellow-400">★</span>
                 )}
               </div>
               <div className="text-gray-300">{item.headline}</div>

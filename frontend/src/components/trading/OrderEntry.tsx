@@ -41,31 +41,28 @@ export default function OrderEntry() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-3 space-y-3">
-      <div className="text-sm font-bold text-gray-300 mb-2">Order Entry</div>
+    <form onSubmit={handleSubmit} className="p-2 space-y-1.5">
+      <div className="text-sm font-bold text-gray-300">Order Entry</div>
 
-      {/* Symbol selector */}
-      <div className="flex gap-2">
+      {/* Symbol + Buy/Sell on one row */}
+      <div className="flex gap-1.5">
         {(["ES", "NQ"] as Symbol[]).map((s) => (
           <button
             key={s}
             type="button"
             onClick={() => setSymbol(s)}
-            className={`flex-1 py-1 text-xs rounded ${
+            className={`px-3 py-0.5 text-xs rounded ${
               symbol === s ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400"
             }`}
           >
             {s}
           </button>
         ))}
-      </div>
-
-      {/* Buy/Sell */}
-      <div className="flex gap-2">
+        <div className="flex-1" />
         <button
           type="button"
           onClick={() => setSide("BUY")}
-          className={`flex-1 py-1.5 text-sm font-bold rounded ${
+          className={`px-4 py-0.5 text-xs font-bold rounded ${
             side === "BUY" ? "bg-green-600 text-white" : "bg-gray-800 text-gray-400"
           }`}
         >
@@ -74,7 +71,7 @@ export default function OrderEntry() {
         <button
           type="button"
           onClick={() => setSide("SELL")}
-          className={`flex-1 py-1.5 text-sm font-bold rounded ${
+          className={`px-4 py-0.5 text-xs font-bold rounded ${
             side === "SELL" ? "bg-red-600 text-white" : "bg-gray-800 text-gray-400"
           }`}
         >
@@ -82,31 +79,31 @@ export default function OrderEntry() {
         </button>
       </div>
 
-      {/* Quantity */}
-      <div>
-        <label className="text-xs text-gray-500">Qty</label>
-        <input
-          type="number"
-          min={1}
-          max={10}
-          value={quantity}
-          onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-        />
-      </div>
-
-      {/* Order type */}
-      <div>
-        <label className="text-xs text-gray-500">Type</label>
-        <select
-          value={orderType}
-          onChange={(e) => setOrderType(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-        >
-          <option value="MARKET">Market</option>
-          <option value="LIMIT">Limit</option>
-          <option value="STOP">Stop</option>
-        </select>
+      {/* Qty + Type on one row */}
+      <div className="flex gap-1.5">
+        <div className="flex-1">
+          <label className="text-xs text-gray-500">Qty</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={quantity}
+            onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs"
+          />
+        </div>
+        <div className="flex-1">
+          <label className="text-xs text-gray-500">Type</label>
+          <select
+            value={orderType}
+            onChange={(e) => setOrderType(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs"
+          >
+            <option value="MARKET">Market</option>
+            <option value="LIMIT">Limit</option>
+            <option value="STOP">Stop</option>
+          </select>
+        </div>
       </div>
 
       {/* Entry price (for limit/stop orders) */}
@@ -118,45 +115,45 @@ export default function OrderEntry() {
             step="0.25"
             value={entryPrice}
             onChange={(e) => setEntryPrice(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs"
             placeholder="Entry price"
           />
         </div>
       )}
 
-      {/* Stop price */}
-      <div>
-        <label className="text-xs text-gray-500">Stop Loss</label>
-        <input
-          type="number"
-          step="0.25"
-          value={stopPrice}
-          onChange={(e) => setStopPrice(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-          placeholder="Stop price"
-          required
-        />
-      </div>
-
-      {/* Target price */}
-      <div>
-        <label className="text-xs text-gray-500">Profit Target</label>
-        <input
-          type="number"
-          step="0.25"
-          value={targetPrice}
-          onChange={(e) => setTargetPrice(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
-          placeholder="Target price"
-          required
-        />
+      {/* Stop + Target on one row */}
+      <div className="flex gap-1.5">
+        <div className="flex-1">
+          <label className="text-xs text-gray-500">Stop Loss</label>
+          <input
+            type="number"
+            step="0.25"
+            value={stopPrice}
+            onChange={(e) => setStopPrice(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs"
+            placeholder="Stop"
+            required
+          />
+        </div>
+        <div className="flex-1">
+          <label className="text-xs text-gray-500">Target</label>
+          <input
+            type="number"
+            step="0.25"
+            value={targetPrice}
+            onChange={(e) => setTargetPrice(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs"
+            placeholder="Target"
+            required
+          />
+        </div>
       </div>
 
       {/* Submit */}
       <button
         type="submit"
         disabled={loading || !stopPrice || !targetPrice}
-        className={`w-full py-2 text-sm font-bold rounded ${
+        className={`w-full py-1.5 text-xs font-bold rounded ${
           side === "BUY"
             ? "bg-green-600 hover:bg-green-700"
             : "bg-red-600 hover:bg-red-700"
