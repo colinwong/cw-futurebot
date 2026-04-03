@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -12,6 +14,7 @@ from src.db.models import (
     OrderStatusEnum,
     OrderTypeEnum,
     Position,
+    ProtectiveOrder,
     SymbolEnum,
 )
 
@@ -143,12 +146,37 @@ async def place_bracket_order(
     )
 
     session.add_all([entry_order, stop_order, target_order])
+    await session.flush()
+
+    # Create position record for the trade
+    position = Position(
+        symbol=req.symbol,
+        direction=direction,
+        quantity=req.quantity,
+        entry_price=req.entry_price or 0,  # 0 for market orders, updated on fill
+        entry_timestamp=datetime.now(timezone.utc),
+        is_open=True,
+    )
+    session.add(position)
+    await session.flush()
+
+    # Track protective orders
+    protective = ProtectiveOrder(
+        position_id=position.id,
+        stop_order_id=stop_order.id,
+        target_order_id=target_order.id,
+        stop_ib_order_id=result.stop_order_id,
+        target_ib_order_id=result.target_order_id,
+        verified_at=datetime.now(timezone.utc),
+    )
+    session.add(protective)
     await session.commit()
 
     return {
         "entry_order_id": result.entry_order_id,
         "stop_order_id": result.stop_order_id,
         "target_order_id": result.target_order_id,
+        "position_id": position.id,
     }
 
 
