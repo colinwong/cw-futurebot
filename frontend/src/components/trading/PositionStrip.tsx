@@ -4,27 +4,36 @@ import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useOrders } from "@/hooks/useOrders";
 import { getPositions } from "@/lib/api";
-import type { Position } from "@/lib/types";
+import { formatTime } from "@/lib/timezone";
+
+interface PositionData {
+  id: number;
+  symbol: string;
+  direction: string;
+  quantity: number;
+  entry_price: number;
+  stop_price: number | null;
+  target_price: number | null;
+  entry_timestamp: string;
+  is_open: boolean;
+  protective_status: string | null;
+}
 
 export default function PositionStrip() {
-  const [positions, setPositions] = useState<Position[]>([]);
+  const [positions, setPositions] = useState<PositionData[]>([]);
   const { subscribe } = useWebSocket();
   const { closePosition, loading } = useOrders();
 
-  // Fetch initial positions
-  useEffect(() => {
+  const fetchPositions = () => {
     getPositions(true)
-      .then((res) => setPositions(res.positions as unknown as Position[]))
+      .then((res) => setPositions(res.positions as unknown as PositionData[]))
       .catch(console.error);
-  }, []);
+  };
 
-  // Subscribe to position updates
+  useEffect(() => { fetchPositions(); }, []);
+
   useEffect(() => {
-    const unsub = subscribe("position", () => {
-      getPositions(true)
-        .then((res) => setPositions(res.positions as unknown as Position[]))
-        .catch(console.error);
-    });
+    const unsub = subscribe("position", fetchPositions);
     return unsub;
   }, [subscribe]);
 
@@ -33,23 +42,36 @@ export default function PositionStrip() {
   return (
     <div className="border-t border-gray-800 bg-gray-900 px-4 py-2">
       <div className="text-xs text-gray-500 mb-1">Open Positions</div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         {positions.map((pos) => (
-          <div key={pos.id} className="flex items-center justify-between text-sm">
+          <div key={pos.id} className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-3">
               <span
                 className={`font-bold ${
                   pos.direction === "LONG" ? "text-green-400" : "text-red-400"
                 }`}
               >
-                {pos.direction} {pos.symbol}
+                {pos.direction} {pos.symbol} x{pos.quantity}
               </span>
-              <span className="text-gray-400">
-                {pos.quantity} @ {pos.entry_price.toFixed(2)}
+              <span className="text-gray-300">
+                Entry: {pos.entry_price > 0 ? pos.entry_price.toFixed(2) : "MKT (pending fill)"}
               </span>
-              {pos.protective_order && (
-                <span className="text-xs text-gray-600">
-                  [Protected: {pos.protective_order.status}]
+              {pos.stop_price && (
+                <span className="text-red-400">
+                  Stop: {pos.stop_price.toFixed(2)}
+                </span>
+              )}
+              {pos.target_price && (
+                <span className="text-green-400">
+                  Target: {pos.target_price.toFixed(2)}
+                </span>
+              )}
+              <span className="text-gray-600">
+                {formatTime(pos.entry_timestamp)}
+              </span>
+              {pos.protective_status && (
+                <span className="text-gray-600">
+                  [{pos.protective_status}]
                 </span>
               )}
             </div>

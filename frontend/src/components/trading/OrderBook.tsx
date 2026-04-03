@@ -4,25 +4,32 @@ import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useOrders } from "@/hooks/useOrders";
 import { getOrders } from "@/lib/api";
+import { formatTime } from "@/lib/timezone";
 import type { Order } from "@/lib/types";
+
+function orderLabel(order: Order): string {
+  if (order.order_type === "MARKET") return "Market";
+  if (order.order_type === "LIMIT") return `Limit @ ${order.limit_price?.toFixed(2)}`;
+  if (order.order_type === "STOP") return `Stop @ ${order.stop_price?.toFixed(2)}`;
+  if (order.order_type === "STOP_LIMIT") return `Stop Limit @ ${order.stop_price?.toFixed(2)}`;
+  return order.order_type;
+}
 
 export default function OrderBook() {
   const [orders, setOrders] = useState<Order[]>([]);
   const { subscribe } = useWebSocket();
   const { cancel, loading } = useOrders();
 
-  useEffect(() => {
+  const fetchOrders = () => {
     getOrders("SUBMITTED")
       .then((res) => setOrders(res.orders as unknown as Order[]))
       .catch(console.error);
-  }, []);
+  };
+
+  useEffect(() => { fetchOrders(); }, []);
 
   useEffect(() => {
-    const unsub = subscribe("order", () => {
-      getOrders("SUBMITTED")
-        .then((res) => setOrders(res.orders as unknown as Order[]))
-        .catch(console.error);
-    });
+    const unsub = subscribe("order", fetchOrders);
     return unsub;
   }, [subscribe]);
 
@@ -36,22 +43,16 @@ export default function OrderBook() {
           <div key={order.id} className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
               <span
-                className={order.side === "BUY" ? "text-green-400" : "text-red-400"}
+                className={`font-bold ${order.side === "BUY" ? "text-green-400" : "text-red-400"}`}
               >
                 {order.side}
               </span>
               <span className="text-gray-300">{order.symbol}</span>
-              <span className="text-gray-500">
-                {order.order_type} x{order.quantity}
-              </span>
-              {order.limit_price && (
-                <span className="text-gray-400">@ {order.limit_price.toFixed(2)}</span>
-              )}
-              {order.stop_price && (
-                <span className="text-gray-400">stop {order.stop_price.toFixed(2)}</span>
-              )}
+              <span className="text-gray-300">x{order.quantity}</span>
+              <span className="text-gray-400">{orderLabel(order)}</span>
+              <span className="text-gray-600">{formatTime(order.timestamp)}</span>
               {order.is_manual && (
-                <span className="text-blue-400 text-xs">MANUAL</span>
+                <span className="text-blue-400">MANUAL</span>
               )}
             </div>
             <button

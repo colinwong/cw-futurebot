@@ -17,7 +17,15 @@ from src.config import settings
 from src.contracts import make_ib_contract
 from src.db.models import SymbolEnum
 from src.db.database import async_session
-from src.db.models import ImpactRatingEnum, NewsEvent, SentimentEnum
+from src.db.models import (
+    Fill,
+    ImpactRatingEnum,
+    NewsEvent,
+    Order as OrderModel,
+    OrderStatusEnum,
+    Position,
+    SentimentEnum,
+)
 from src.news.analyzer import NewsAnalyzer
 from src.news.factory import create_news_provider
 
@@ -78,6 +86,9 @@ async def lifespan(app: FastAPI):
         broker = IBBroker(ib_instance=ib, executor=_ib_executor)
         orders.set_broker(broker)
         logger.info("Broker wired to orders API — manual trading enabled")
+
+        # Register fill tracking callback
+        _setup_fill_tracking(asyncio.get_event_loop())
 
         # Subscribe to market data for ES and NQ
         _streaming_task = asyncio.create_task(_start_market_data_streaming())
@@ -158,6 +169,96 @@ async def lifespan(app: FastAPI):
 
 
 import time as _time
+from datetime import datetime as _datetime, timezone as _tz
+
+
+def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
+    """Register IB callbacks to track order fills and update positions."""
+    if not ib:
+        return
+
+    def _on_order_status(trade):
+        """Called by ib_insync when an order status changes."""
+        ib_order_id = trade.order.orderId
+        status = trade.orderStatus.status
+
+        if status == "Filled":
+            fill_price = trade.orderStatus.avgFillPrice
+            filled_qty = int(trade.orderStatus.filled)
+
+            async def _process_fill():
+                try:
+                    async with async_session() as session:
+                        # Find our Order record
+                        from sqlalchemy import select
+                        result = await session.execute(
+                            select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
+                        )
+                        order = result.scalars().first()
+                        if not order:
+                            logger.warning("Fill for unknown ib_order_id %d", ib_order_id)
+                            return
+
+                        # Update order status
+                        order.status = OrderStatusEnum.FILLED
+                        order.filled_at = _datetime.now(_tz.utc)
+
+                        # Create Fill record
+                        fill = Fill(
+                            order_id=order.id,
+                            fill_price=fill_price,
+                            quantity=filled_qty,
+                            commission=0.0,
+                            slippage=0.0,
+                            ib_execution_id=str(ib_order_id),
+                        )
+                        session.add(fill)
+
+                        # If this is an entry order (BUY for LONG, or SELL for SHORT),
+                        # update the Position's entry_price
+                        if order.order_type.value == "MARKET" or order.order_type.value == "LIMIT":
+                            # Find position created around the same time with matching symbol
+                            pos_result = await session.execute(
+                                select(Position).where(
+                                    Position.symbol == order.symbol,
+                                    Position.is_open.is_(True),
+                                    Position.entry_price == 0,
+                                )
+                            )
+                            position = pos_result.scalars().first()
+                            if position:
+                                position.entry_price = fill_price
+                                logger.info(
+                                    "Position %d entry price updated: %s @ %.2f",
+                                    position.id, position.symbol.value, fill_price,
+                                )
+
+                        await session.commit()
+                        logger.info(
+                            "Fill recorded: ib_order=%d, price=%.2f, qty=%d",
+                            ib_order_id, fill_price, filled_qty,
+                        )
+
+                        # Broadcast to UI
+                        await manager.broadcast("order", {
+                            "ib_order_id": ib_order_id,
+                            "status": "FILLED",
+                            "fill_price": fill_price,
+                            "quantity": filled_qty,
+                        })
+                        await manager.broadcast("position", {"action": "updated"})
+
+                except Exception:
+                    logger.exception("Error processing fill for ib_order=%d", ib_order_id)
+
+            asyncio.run_coroutine_threadsafe(_process_fill(), main_loop)
+
+    def _register():
+        ib.orderStatusEvent += _on_order_status
+
+    asyncio.get_event_loop().run_in_executor(_ib_executor, _register)
+    logger.info("Fill tracking registered")
+
 
 # Track current candle per symbol for tick-based candle building
 _current_candles: dict[str, dict] = {}
