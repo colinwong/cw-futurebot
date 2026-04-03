@@ -38,42 +38,22 @@ export default function ActivityLog() {
   const { subscribe } = useWebSocket();
 
   useEffect(() => {
+    function makeEntry(type: LogEntry["type"], typeLabel: string, typeColor: string, message: string): LogEntry {
+      return { id: `${Date.now()}-${Math.random()}`, time: formatTime(Date.now() / 1000), type, typeLabel, message, typeColor, msgColor: "text-gray-300" };
+    }
+
     const unsubs = [
       subscribe("order", (data) => {
         const d = data as Record<string, unknown>;
-        setEntries((prev) => [{
-          id: `${Date.now()}-${Math.random()}`,
-          time: formatTime(Date.now() / 1000),
-          type: "order",
-          typeLabel: "ORDER",
-          message: formatOrderMessage(d),
-          typeColor: "bg-blue-900 text-blue-400",
-          msgColor: "text-gray-300",
-        }, ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("order", "ORDER", "bg-blue-900 text-blue-400", formatOrderMessage(d)), ...prev].slice(0, 100));
       }),
       subscribe("position", (data) => {
         const d = data as Record<string, unknown>;
-        setEntries((prev) => [{
-          id: `${Date.now()}-${Math.random()}`,
-          time: formatTime(Date.now() / 1000),
-          type: "trade",
-          typeLabel: "TRADE",
-          message: formatPositionMessage(d),
-          typeColor: "bg-green-900 text-green-400",
-          msgColor: "text-gray-300",
-        }, ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("trade", "TRADE", "bg-green-900 text-green-400", formatPositionMessage(d)), ...prev].slice(0, 100));
       }),
       subscribe("system", (data) => {
         const d = data as Record<string, unknown>;
-        setEntries((prev) => [{
-          id: `${Date.now()}-${Math.random()}`,
-          time: formatTime(Date.now() / 1000),
-          type: "system",
-          typeLabel: "SYS",
-          message: formatSystemMessage(d),
-          typeColor: "bg-yellow-900 text-yellow-400",
-          msgColor: "text-gray-300",
-        }, ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("system", "SYS", "bg-yellow-900 text-yellow-400", formatSystemMessage(d)), ...prev].slice(0, 100));
       }),
     ];
     return () => unsubs.forEach((u) => u());

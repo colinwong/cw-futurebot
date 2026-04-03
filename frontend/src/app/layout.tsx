@@ -32,6 +32,9 @@ export default function RootLayout({
           <Link href="/signals" className="text-gray-400 hover:text-white">
             Signals
           </Link>
+          <Link href="/logs" className="text-gray-400 hover:text-white">
+            Logs
+          </Link>
           <Link href="/settings" className="text-gray-400 hover:text-white">
             Settings
           </Link>
