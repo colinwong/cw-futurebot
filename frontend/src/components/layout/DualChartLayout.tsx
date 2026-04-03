@@ -1,12 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import TradingChart from "@/components/chart/TradingChart";
 import ChartTimeframe from "@/components/chart/ChartTimeframe";
 import { useMarketData } from "@/hooks/useMarketData";
+import { getPositions } from "@/lib/api";
+import { getTimezoneOffsetSec } from "@/lib/timezone";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import type { Symbol } from "@/lib/types";
 
-function SymbolChart({ symbol }: { symbol: Symbol }) {
+interface PositionOverlay {
+  symbol: string;
+  direction: string;
+  entry_price: number;
+  stop_price: number | null;
+  target_price: number | null;
+  entry_timestamp: string;
+}
+
+function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: PositionOverlay[] }) {
   const [barSize, setBarSize] = useState("5 mins");
   const [duration, setDuration] = useState("2 D");
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
@@ -15,6 +27,67 @@ function SymbolChart({ symbol }: { symbol: Symbol }) {
     setBarSize(newBarSize);
     setDuration(newDuration);
   };
+
+  // Generate chart overlays from positions
+  const { markers, horizontalLines } = useMemo(() => {
+    const m: Array<{
+      time: number;
+      position: "aboveBar" | "belowBar";
+      color: string;
+      shape: "arrowUp" | "arrowDown" | "circle";
+      text: string;
+    }> = [];
+    const lines: Array<{
+      price: number;
+      color: string;
+      lineStyle: number;
+      title: string;
+    }> = [];
+
+    for (const pos of positions) {
+      // Entry marker
+      if (pos.entry_price > 0) {
+        const entryEpoch = Math.floor(new Date(pos.entry_timestamp).getTime() / 1000) + getTimezoneOffsetSec();
+        m.push({
+          time: entryEpoch,
+          position: pos.direction === "LONG" ? "belowBar" : "aboveBar",
+          color: pos.direction === "LONG" ? "#26a69a" : "#ef5350",
+          shape: pos.direction === "LONG" ? "arrowUp" : "arrowDown",
+          text: `${pos.direction} @ ${pos.entry_price.toFixed(2)}`,
+        });
+
+        // Entry price line
+        lines.push({
+          price: pos.entry_price,
+          color: "#4a90d9",
+          lineStyle: 2, // dashed
+          title: `Entry ${pos.entry_price.toFixed(2)}`,
+        });
+      }
+
+      // Stop line
+      if (pos.stop_price) {
+        lines.push({
+          price: pos.stop_price,
+          color: "#ef5350",
+          lineStyle: 2,
+          title: `Stop ${pos.stop_price.toFixed(2)}`,
+        });
+      }
+
+      // Target line
+      if (pos.target_price) {
+        lines.push({
+          price: pos.target_price,
+          color: "#26a69a",
+          lineStyle: 2,
+          title: `Target ${pos.target_price.toFixed(2)}`,
+        });
+      }
+    }
+
+    return { markers: m, horizontalLines: lines };
+  }, [positions]);
 
   return (
     <div className="flex flex-col border border-gray-800 rounded">
@@ -34,17 +107,44 @@ function SymbolChart({ symbol }: { symbol: Symbol }) {
           Loading {symbol} data...
         </div>
       ) : (
-        <TradingChart candles={candles} height={400} />
+        <TradingChart
+          candles={candles}
+          height={400}
+          markers={markers}
+          horizontalLines={horizontalLines}
+        />
       )}
     </div>
   );
 }
 
 export default function DualChartLayout() {
+  const [positions, setPositions] = useState<PositionOverlay[]>([]);
+  const { subscribe } = useWebSocket();
+
+  useEffect(() => {
+    getPositions(true)
+      .then((res) => setPositions(res.positions as unknown as PositionOverlay[]))
+      .catch(console.error);
+  }, []);
+
+  // Refresh positions when they change
+  useEffect(() => {
+    const unsub = subscribe("position", () => {
+      getPositions(true)
+        .then((res) => setPositions(res.positions as unknown as PositionOverlay[]))
+        .catch(console.error);
+    });
+    return unsub;
+  }, [subscribe]);
+
+  const esPositions = positions.filter((p) => p.symbol === "ES");
+  const nqPositions = positions.filter((p) => p.symbol === "NQ");
+
   return (
     <div className="grid grid-cols-2 gap-2">
-      <SymbolChart symbol="ES" />
-      <SymbolChart symbol="NQ" />
+      <SymbolChart symbol="ES" positions={esPositions} />
+      <SymbolChart symbol="NQ" positions={nqPositions} />
     </div>
   );
 }

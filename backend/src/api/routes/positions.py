@@ -50,6 +50,8 @@ async def list_positions(
             "entry_price": pos.entry_price,
             "stop_price": stop_price,
             "target_price": target_price,
+            "stop_ib_order_id": protective.stop_ib_order_id if protective else None,
+            "target_ib_order_id": protective.target_ib_order_id if protective else None,
             "entry_timestamp": pos.entry_timestamp.isoformat(),
             "exit_price": pos.exit_price,
             "exit_timestamp": pos.exit_timestamp.isoformat() if pos.exit_timestamp else None,

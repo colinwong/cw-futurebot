@@ -1,14 +1,28 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { getSignals } from "@/lib/api";
 import { formatTime } from "@/lib/timezone";
 import type { SignalRecord } from "@/lib/types";
 
 export default function SignalFeed() {
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const { subscribe } = useWebSocket();
+  const historicalLoaded = useRef(false);
 
+  // Load recent signals from DB on mount
+  useEffect(() => {
+    if (historicalLoaded.current) return;
+    getSignals({ limit: 30 })
+      .then((res) => {
+        setSignals(res.signals as unknown as SignalRecord[]);
+        historicalLoaded.current = true;
+      })
+      .catch(console.error);
+  }, []);
+
+  // Live signals via WebSocket
   useEffect(() => {
     const unsub = subscribe("signal", (data) => {
       const signal = data as SignalRecord;
@@ -21,7 +35,7 @@ export default function SignalFeed() {
     <div className="p-3 h-full">
       <div className="text-sm font-bold text-gray-300 mb-2">Signal Feed</div>
       {signals.length === 0 ? (
-        <div className="text-xs text-gray-600">Waiting for signals...</div>
+        <div className="text-xs text-gray-600">No signals yet — algo engine not running</div>
       ) : (
         <div className="space-y-2">
           {signals.map((sig) => (

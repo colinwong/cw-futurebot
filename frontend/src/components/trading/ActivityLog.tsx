@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { formatTime } from "@/lib/timezone";
+import { getLogs } from "@/lib/api";
+import { formatTime, formatDateTime } from "@/lib/timezone";
 
 interface LogEntry {
   id: string;
@@ -14,10 +15,15 @@ interface LogEntry {
   msgColor: string;
 }
 
+const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  order: { label: "ORDER", color: "bg-blue-900 text-blue-400" },
+  fill: { label: "FILL", color: "bg-cyan-900 text-cyan-400" },
+  trade: { label: "TRADE", color: "bg-green-900 text-green-400" },
+  system: { label: "SYS", color: "bg-yellow-900 text-yellow-400" },
+};
+
 function formatOrderMessage(d: Record<string, unknown>): string {
-  if (d.status === "FILLED") {
-    return `Order #${d.ib_order_id} filled @ ${(d.fill_price as number)?.toFixed(2)} x${d.quantity}`;
-  }
+  if (d.status === "FILLED") return `Order #${d.ib_order_id} filled @ ${(d.fill_price as number)?.toFixed(2)} x${d.quantity}`;
   if (d.status) return `Order #${d.ib_order_id} ${d.status}`;
   return JSON.stringify(d).slice(0, 60);
 }
@@ -36,10 +42,37 @@ function formatSystemMessage(d: Record<string, unknown>): string {
 export default function ActivityLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const { subscribe } = useWebSocket();
+  const historicalLoaded = useRef(false);
 
+  // Load recent activity from DB on mount
+  useEffect(() => {
+    if (historicalLoaded.current) return;
+    getLogs(30)
+      .then((res) => {
+        const historical: LogEntry[] = res.entries
+          .filter((e) => e.type !== "news") // news is in its own feed
+          .map((e, i) => {
+            const cfg = TYPE_CONFIG[e.type] || TYPE_CONFIG.system;
+            return {
+              id: `hist-${i}`,
+              time: formatDateTime(e.timestamp),
+              type: (e.type === "fill" ? "order" : e.type) as LogEntry["type"],
+              typeLabel: cfg.label,
+              message: e.message,
+              typeColor: cfg.color,
+              msgColor: "text-gray-300",
+            };
+          });
+        setEntries(historical);
+        historicalLoaded.current = true;
+      })
+      .catch(console.error);
+  }, []);
+
+  // Live events
   useEffect(() => {
     function makeEntry(type: LogEntry["type"], typeLabel: string, typeColor: string, message: string): LogEntry {
-      return { id: `${Date.now()}-${Math.random()}`, time: formatTime(Date.now() / 1000), type, typeLabel, message, typeColor, msgColor: "text-gray-300" };
+      return { id: `live-${Date.now()}-${Math.random()}`, time: formatTime(Date.now() / 1000), type, typeLabel, message, typeColor, msgColor: "text-gray-300" };
     }
 
     const unsubs = [

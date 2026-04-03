@@ -2,8 +2,7 @@
 
 import AccountBar from "@/components/layout/AccountBar";
 import DualChartLayout from "@/components/layout/DualChartLayout";
-import PositionStrip from "@/components/trading/PositionStrip";
-import OrderBook from "@/components/trading/OrderBook";
+import PositionsAndOrders from "@/components/trading/PositionsAndOrders";
 import OrderEntry from "@/components/trading/OrderEntry";
 import ActivityLog from "@/components/trading/ActivityLog";
 import SignalFeed from "@/components/signals/SignalFeed";
@@ -19,9 +18,8 @@ export default function TradingTerminal() {
         <DualChartLayout />
       </div>
 
-      {/* Positions & Orders */}
-      <PositionStrip />
-      <OrderBook />
+      {/* Positions & Orders (grouped) */}
+      <PositionsAndOrders />
 
       {/* Bottom panel: Order Entry | Signal Feed | News Feed — fills remaining height */}
       <div className="grid grid-cols-3 border-t border-gray-800 flex-1 min-h-0">
