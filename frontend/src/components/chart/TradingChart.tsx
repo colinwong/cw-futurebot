@@ -13,6 +13,7 @@ import {
   type SeriesMarker,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/types";
+import { getDisplayTimezone, formatDate } from "@/lib/timezone";
 
 interface TradingChartProps {
   candles: Candle[];
@@ -66,6 +67,16 @@ export default function TradingChart({
         borderColor: "#2a2e39",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => {
+          // time is already shifted to configured timezone by useMarketData
+          const d = new Date(time * 1000);
+          const h = d.getUTCHours();
+          const m = d.getUTCMinutes();
+          if (h === 0 && m === 0) {
+            return formatDate(time);
+          }
+          return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        },
       },
       height,
     });

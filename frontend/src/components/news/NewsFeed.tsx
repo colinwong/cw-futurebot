@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { formatTime } from "@/lib/timezone";
 import type { NewsEvent, ImpactRating, Sentiment } from "@/lib/types";
 
 const impactColors: Record<ImpactRating, string> = {
@@ -40,7 +41,7 @@ export default function NewsFeed() {
             <div key={item.id} className="text-xs border-b border-gray-800 pb-1.5">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-gray-500">
-                  {new Date(item.timestamp).toLocaleTimeString()}
+                  {formatTime(item.timestamp)}
                 </span>
                 <span
                   className={`px-1 py-0.5 rounded text-xs ${impactColors[item.impact_rating]}`}
@@ -54,12 +55,28 @@ export default function NewsFeed() {
                   <span className="text-xs text-yellow-400">★</span>
                 )}
               </div>
-              <div className="text-gray-300">{item.headline}</div>
-              {item.analysis && (
-                <div className="text-gray-500 mt-0.5">
-                  {(item.analysis as Record<string, string>).reasoning?.slice(0, 120)}
-                </div>
-              )}
+              <div className="text-gray-300">
+                {item.url ? (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-blue-400 hover:underline"
+                  >
+                    {item.headline}
+                  </a>
+                ) : (
+                  item.headline
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-gray-600">{item.source}</span>
+                {item.analysis && (
+                  <span className="text-gray-500">
+                    — {(item.analysis as Record<string, string>).reasoning?.slice(0, 100)}
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </div>

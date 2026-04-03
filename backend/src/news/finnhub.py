@@ -24,7 +24,7 @@ class FinnhubNewsProvider(BaseNewsProvider):
         self._callbacks: list[Callable[[NewsItem], None]] = []
         self._polling_task: asyncio.Task | None = None
         self._seen_ids: OrderedDict[str, None] = OrderedDict()
-        self._poll_interval: int = 60  # seconds
+        self._poll_interval: int = 5  # seconds (Finnhub free tier: 60 calls/min, 4 symbols + general = 5 calls/cycle = 12 cycles/min)
 
     async def connect(self) -> None:
         if not settings.finnhub_api_key:
@@ -80,12 +80,13 @@ class FinnhubNewsProvider(BaseNewsProvider):
         """Poll for new news at regular intervals."""
         while True:
             try:
-                await asyncio.sleep(self._poll_interval)
                 await self._check_new_news()
+                await asyncio.sleep(self._poll_interval)
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("Error in news polling loop")
+                await asyncio.sleep(self._poll_interval)
 
     async def _check_new_news(self) -> None:
         if not self._client:

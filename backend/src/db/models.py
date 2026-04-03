@@ -296,3 +296,23 @@ class SystemEvent(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     event_type: Mapped[SystemEventTypeEnum] = mapped_column(Enum(SystemEventTypeEnum))
     details: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SettingsAudit(Base):
+    __tablename__ = "settings_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    key: Mapped[str] = mapped_column(String(100))
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str] = mapped_column(Text)
+    changed_by: Mapped[str] = mapped_column(String(50), default="ui")

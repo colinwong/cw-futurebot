@@ -1,8 +1,16 @@
+from zoneinfo import ZoneInfo
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Exchange timezone for US futures (ES/NQ)
+EXCHANGE_TZ = ZoneInfo("America/New_York")
+UTC_TZ = ZoneInfo("UTC")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore"
+    )
 
     # Database
     database_url: str = "postgresql+asyncpg://futurebot:futurebot@localhost:5434/futurebot"
@@ -23,6 +31,9 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # Display
+    display_timezone: str = "America/New_York"
 
     # Server
     host: str = "0.0.0.0"

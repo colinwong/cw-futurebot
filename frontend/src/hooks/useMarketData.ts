@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { getCandles } from "@/lib/api";
+import { getTimezoneOffsetSec } from "@/lib/timezone";
 import type { Candle, Symbol, TickData } from "@/lib/types";
 import { useWebSocket } from "./useWebSocket";
 
@@ -14,6 +15,10 @@ const BAR_SIZES: Record<string, number> = {
   "4 hours": 14400,
   "1 day": 86400,
 };
+
+function toLocalEpoch(utcEpoch: number): number {
+  return utcEpoch + getTimezoneOffsetSec();
+}
 
 function floorToBar(timestamp: number, barSeconds: number): number {
   return Math.floor(timestamp / barSeconds) * barSeconds;
@@ -33,7 +38,7 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
     setLoading(true);
     getCandles(symbol, barSize, duration)
       .then((res) => {
-        setCandles(res.candles);
+        setCandles(res.candles.map((c) => ({ ...c, time: toLocalEpoch(c.time) })));
         historicalLoaded.current = true;
       })
       .catch(console.error)
@@ -61,7 +66,7 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
       setCandles((prev) => {
         if (prev.length === 0) return prev;
 
-        const barTime = floorToBar(bar.time, barSeconds);
+        const barTime = floorToBar(toLocalEpoch(bar.time), barSeconds);
         const last = prev[prev.length - 1];
 
         if (last && last.time === barTime) {

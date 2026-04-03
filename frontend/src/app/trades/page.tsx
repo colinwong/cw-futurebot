@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getTrades, getTradeAudit } from "@/lib/api";
+import { formatDateTime } from "@/lib/timezone";
 import type { TradeRecord } from "@/lib/types";
 
 export default function TradesPage() {
@@ -59,7 +60,7 @@ export default function TradesPage() {
                   >
                     <td className="py-1 text-gray-500">
                       {trade.exit_timestamp
-                        ? new Date(trade.exit_timestamp).toLocaleString()
+                        ? formatDateTime(trade.exit_timestamp)
                         : "—"}
                     </td>
                     <td>{trade.symbol}</td>

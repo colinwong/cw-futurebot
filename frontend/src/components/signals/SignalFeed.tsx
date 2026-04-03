@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { formatTime } from "@/lib/timezone";
 import type { SignalRecord } from "@/lib/types";
 
 export default function SignalFeed() {
@@ -27,7 +28,7 @@ export default function SignalFeed() {
             <div key={sig.id} className="text-xs border-b border-gray-800 pb-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">
-                  {new Date(sig.timestamp).toLocaleTimeString()}
+                  {formatTime(sig.timestamp)}
                 </span>
                 <span
                   className={`font-bold ${

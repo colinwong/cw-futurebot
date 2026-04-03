@@ -109,3 +109,37 @@ export function getStatus() {
     } | null;
   }>("/api/status");
 }
+
+// Settings
+export function getSettings() {
+  return fetchApi<{
+    settings: Record<string, {
+      value: string;
+      default: string;
+      type: string;
+      label: string;
+      tooltip: string;
+    }>;
+  }>("/api/settings");
+}
+
+export function updateSettings(settings: Record<string, string>) {
+  return fetchApi<{ updated: string[] }>("/api/settings", {
+    method: "PUT",
+    body: JSON.stringify({ settings }),
+  });
+}
+
+export function getSettingsAudit(limit = 50) {
+  return fetchApi<{
+    audits: Array<{
+      id: number;
+      timestamp: string;
+      key: string;
+      label: string;
+      old_value: string | null;
+      new_value: string;
+      changed_by: string;
+    }>;
+  }>(`/api/settings/audit?limit=${limit}`);
+}

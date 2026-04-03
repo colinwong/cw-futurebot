@@ -8,11 +8,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ib_insync import IB
 
-from src.api.routes import market_data, orders, positions, signals, strategy, trades, ws
+from src.api.routes import market_data, orders, positions
+from src.api.routes import settings as settings_routes
+from src.api.routes import signals, strategy, trades, ws
 from src.api.routes.ws import manager
 from src.config import settings
 from src.contracts import make_ib_contract
 from src.db.models import SymbolEnum
+from src.db.database import async_session
+from src.db.models import ImpactRatingEnum, NewsEvent, SentimentEnum
+from src.news.analyzer import NewsAnalyzer
+from src.news.factory import create_news_provider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Shared IB connection — initialized in lifespan
 ib: IB | None = None
+
+# News provider + analyzer
+_news_provider = None
+_news_analyzer = None
 
 # Dedicated thread pool for IB calls (ib_insync needs its own event loop)
 _ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -69,9 +79,73 @@ async def lifespan(app: FastAPI):
         logger.warning("Could not connect to IB Gateway: %s", e)
         ib = None
 
+    # Start news provider + analyzer
+    global _news_provider, _news_analyzer
+    try:
+        _news_provider = create_news_provider("finnhub")
+
+        _news_analyzer = NewsAnalyzer()
+        _news_analyzer.initialize()
+
+        main_loop = asyncio.get_event_loop()
+
+        def _on_news(item):
+            async def _process_news():
+                # Analyze with Claude if analyzer is available
+                analysis = None
+                if _news_analyzer:
+                    analysis = await _news_analyzer.analyze(item)
+
+                news_data = {
+                    "id": item.id,
+                    "timestamp": item.timestamp.isoformat(),
+                    "source": item.source,
+                    "url": item.url,
+                    "headline": item.headline,
+                    "relevance_score": analysis.get("relevance_score", 0) if analysis else 0,
+                    "sentiment": analysis.get("sentiment", "NEUTRAL") if analysis else "NEUTRAL",
+                    "impact_rating": analysis.get("impact_rating", "LOW") if analysis else "LOW",
+                    "analysis": analysis,
+                    "is_significant": analysis.get("impact_rating") in ("HIGH", "CRITICAL") if analysis else False,
+                }
+                # Persist to database
+                try:
+                    async with async_session() as session:
+                        sentiment_val = analysis.get("sentiment", "NEUTRAL") if analysis else "NEUTRAL"
+                        impact_val = analysis.get("impact_rating", "LOW") if analysis else "LOW"
+                        news_event = NewsEvent(
+                            timestamp=item.timestamp,
+                            source=item.source,
+                            headline=item.headline,
+                            symbols=item.symbols or [],
+                            raw_payload=item.raw_payload,
+                            relevance_score=analysis.get("relevance_score", 0) if analysis else 0,
+                            sentiment=SentimentEnum(sentiment_val),
+                            impact_rating=ImpactRatingEnum(impact_val),
+                            analysis=analysis,
+                            is_significant=impact_val in ("HIGH", "CRITICAL"),
+                        )
+                        session.add(news_event)
+                        await session.commit()
+                except Exception:
+                    logger.exception("Error persisting news event")
+
+                await manager.broadcast("news", news_data, buffer=True)
+                logger.info("News: [%s] %s", news_data["impact_rating"], item.headline[:60])
+
+            asyncio.run_coroutine_threadsafe(_process_news(), main_loop)
+
+        _news_provider.on_news(_on_news)
+        await _news_provider.connect()
+        logger.info("News provider (Finnhub) started")
+    except Exception as e:
+        logger.warning("Could not start news provider: %s", e)
+
     yield
 
     logger.info("Shutting down cw-futurebot backend")
+    if _news_provider:
+        await _news_provider.disconnect()
     if ib and ib.isConnected():
         await run_ib(ib.disconnect)
     _ib_executor.shutdown(wait=False)
@@ -191,6 +265,7 @@ app.include_router(orders.router)
 app.include_router(signals.router)
 app.include_router(market_data.router)
 app.include_router(strategy.router)
+app.include_router(settings_routes.router)
 app.include_router(ws.router)
 
 

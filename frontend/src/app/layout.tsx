@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import SettingsInitializer from "@/components/SettingsInitializer";
 import "./globals.css";
 
 const geistMono = Geist_Mono({
@@ -35,6 +36,7 @@ export default function RootLayout({
             Settings
           </Link>
         </nav>
+        <SettingsInitializer />
         <main className="flex-1 flex flex-col">{children}</main>
       </body>
     </html>

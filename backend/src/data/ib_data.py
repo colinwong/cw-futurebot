@@ -4,11 +4,20 @@ from typing import Callable
 
 from ib_insync import IB
 
+from src.config import EXCHANGE_TZ, UTC_TZ
 from src.contracts import make_ib_contract
 from src.data.base import Bar, BaseMarketData, Tick
 from src.db.models import SymbolEnum
 
 logger = logging.getLogger(__name__)
+
+
+def _ib_bar_to_utc(bar_date) -> datetime:
+    """Convert IB bar date (naive ET) to timezone-aware UTC datetime."""
+    dt = bar_date if isinstance(bar_date, datetime) else datetime.fromisoformat(str(bar_date))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=EXCHANGE_TZ)
+    return dt.astimezone(UTC_TZ)
 
 
 class IBMarketData(BaseMarketData):
@@ -80,7 +89,7 @@ class IBMarketData(BaseMarketData):
 
         return [
             Bar(
-                timestamp=bar.date if isinstance(bar.date, datetime) else datetime.fromisoformat(str(bar.date)),
+                timestamp=_ib_bar_to_utc(bar.date),
                 open=bar.open,
                 high=bar.high,
                 low=bar.low,

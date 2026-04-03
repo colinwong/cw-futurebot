@@ -2,10 +2,19 @@ from datetime import datetime
 
 from fastapi import APIRouter, Query
 
+from src.config import EXCHANGE_TZ, UTC_TZ
 from src.contracts import make_ib_contract
 from src.db.models import SymbolEnum
 
 router = APIRouter(prefix="/api/market-data", tags=["market-data"])
+
+
+def _ib_bar_to_utc_epoch(bar_date) -> int:
+    """Convert IB bar date (naive ET) to UTC epoch seconds."""
+    dt = bar_date if isinstance(bar_date, datetime) else datetime.fromisoformat(str(bar_date))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=EXCHANGE_TZ)
+    return int(dt.astimezone(UTC_TZ).timestamp())
 
 
 @router.get("/{symbol}/candles")
@@ -40,7 +49,7 @@ async def get_candles(
         "bar_size": bar_size,
         "candles": [
             {
-                "time": int(bar.date.timestamp()) if isinstance(bar.date, datetime) else int(datetime.fromisoformat(str(bar.date)).timestamp()),
+                "time": _ib_bar_to_utc_epoch(bar.date),
                 "open": bar.open,
                 "high": bar.high,
                 "low": bar.low,

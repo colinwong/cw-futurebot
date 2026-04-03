@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { formatTime } from "@/lib/timezone";
 
 interface LogEntry {
   id: string;
@@ -20,7 +21,7 @@ export default function ActivityLog() {
       const d = data as Record<string, unknown>;
       const entry: LogEntry = {
         id: `${Date.now()}-${Math.random()}`,
-        time: new Date().toLocaleTimeString(),
+        time: formatTime(Date.now() / 1000),
         type,
         message: d.message as string || JSON.stringify(d).slice(0, 80),
         color,

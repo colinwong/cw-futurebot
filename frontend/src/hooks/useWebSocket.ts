@@ -27,6 +27,10 @@ function connect() {
   ws.onopen = () => {
     wsConnected = true;
     notifyConnectedListeners();
+    // Request buffered events after React components have mounted their subscriptions
+    setTimeout(() => {
+      if (ws?.readyState === WebSocket.OPEN) ws.send("replay");
+    }, 500);
     const pingInterval = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) ws.send("ping");
     }, 30000);

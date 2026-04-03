@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import settings
+from src.config import EXCHANGE_TZ, UTC_TZ, settings
 from src.db.models import (
     DirectionEnum,
     Position,
@@ -155,7 +155,12 @@ class RiskManager:
         )
 
     async def _check_daily_loss(self, session: AsyncSession) -> RiskCheckResult:
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Reset at ET midnight (exchange timezone), convert to UTC for DB query
+        today_start = (
+            datetime.now(EXCHANGE_TZ)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .astimezone(UTC_TZ)
+        )
 
         result = await session.execute(
             select(func.sum(TradeOutcome.pnl)).where(

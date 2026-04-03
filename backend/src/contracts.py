@@ -4,6 +4,7 @@ from datetime import datetime
 
 from ib_insync import Contract
 
+from src.config import EXCHANGE_TZ
 from src.db.models import SymbolEnum
 
 FUTURES_CONTRACTS = {
@@ -29,7 +30,7 @@ _QUARTER_MONTHS = [(3, "H"), (6, "M"), (9, "U"), (12, "Z")]
 
 def _front_month_expiry() -> str:
     """Get the front-month contract expiry in YYYYMM format."""
-    now = datetime.now()
+    now = datetime.now(EXCHANGE_TZ)
     for month, _code in _QUARTER_MONTHS:
         # Contract expires 3rd Friday of the month; use month as cutoff
         if now.month <= month:

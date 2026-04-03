@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getSignals } from "@/lib/api";
+import { formatDateTime } from "@/lib/timezone";
 import type { SignalRecord } from "@/lib/types";
 
 export default function SignalsPage() {
@@ -67,7 +68,7 @@ export default function SignalsPage() {
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500">
-                    {new Date(sig.timestamp).toLocaleString()}
+                    {formatDateTime(sig.timestamp)}
                   </span>
                   <span
                     className={`font-bold ${

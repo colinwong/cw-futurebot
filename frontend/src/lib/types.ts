@@ -140,6 +140,7 @@ export interface NewsEvent {
   id: number;
   timestamp: string;
   source: string;
+  url: string | null;
   headline: string;
   relevance_score: number;
   sentiment: Sentiment;
