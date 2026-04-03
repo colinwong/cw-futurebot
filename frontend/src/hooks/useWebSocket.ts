@@ -18,7 +18,7 @@ const connectedListeners = new Set<() => void>();
 
 // Client-side event buffer — survives page navigations within the SPA
 const eventBuffer = new Map<WSEventType, unknown[]>();
-const BUFFERED_TYPES: WSEventType[] = ["news", "signal", "position", "order", "account"];
+const BUFFERED_TYPES: WSEventType[] = ["news", "signal"];
 
 function bufferEvent(type: WSEventType, data: unknown) {
   if (!BUFFERED_TYPES.includes(type)) return;
