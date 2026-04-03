@@ -24,32 +24,57 @@ function floorToBar(timestamp: number, barSeconds: number): number {
   return Math.floor(timestamp / barSeconds) * barSeconds;
 }
 
+// Module-level cache — survives page navigations within SPA
+type CacheKey = `${Symbol}|${string}|${string}`;
+const candleCache = new Map<CacheKey, Candle[]>();
+const tickCache = new Map<Symbol, TickData>();
+const loadedKeys = new Set<CacheKey>();
+
+function cacheKey(symbol: Symbol, barSize: string, duration: string): CacheKey {
+  return `${symbol}|${barSize}|${duration}`;
+}
+
 export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 D") {
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [lastTick, setLastTick] = useState<TickData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const key = cacheKey(symbol, barSize, duration);
+  const cached = candleCache.get(key);
+  const cachedTick = tickCache.get(symbol);
+
+  const [candles, setCandles] = useState<Candle[]>(cached || []);
+  const [lastTick, setLastTick] = useState<TickData | null>(cachedTick || null);
+  const [loading, setLoading] = useState(!cached);
   const { subscribe } = useWebSocket();
   const barSeconds = BAR_SIZES[barSize] || 300;
-  const historicalLoaded = useRef(false);
+  const historicalLoaded = useRef(loadedKeys.has(key));
 
-  // Fetch historical candles
+  // Fetch historical candles (skip if cached)
   useEffect(() => {
+    if (candleCache.has(key)) {
+      setCandles(candleCache.get(key)!);
+      setLoading(false);
+      historicalLoaded.current = true;
+      return;
+    }
+
     historicalLoaded.current = false;
     setLoading(true);
     getCandles(symbol, barSize, duration)
       .then((res) => {
-        setCandles(res.candles.map((c) => ({ ...c, time: toLocalEpoch(c.time) })));
+        const data = res.candles.map((c) => ({ ...c, time: toLocalEpoch(c.time) }));
+        candleCache.set(key, data);
+        loadedKeys.add(key);
+        setCandles(data);
         historicalLoaded.current = true;
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [symbol, barSize, duration]);
+  }, [symbol, barSize, duration, key]);
 
   // Subscribe to real-time tick updates
   useEffect(() => {
     const unsub = subscribe("tick", (data) => {
       const tick = data as TickData;
       if (tick.symbol === symbol) {
+        tickCache.set(symbol, tick);
         setLastTick(tick);
       }
     });
@@ -69,9 +94,9 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
         const barTime = floorToBar(toLocalEpoch(bar.time), barSeconds);
         const last = prev[prev.length - 1];
 
+        let updated: Candle[];
         if (last && last.time === barTime) {
-          // Update existing candle — extend high/low, update close, add volume
-          return [
+          updated = [
             ...prev.slice(0, -1),
             {
               time: barTime,
@@ -83,8 +108,7 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
             },
           ];
         } else if (barTime > (last?.time ?? 0)) {
-          // New bar period — start a new candle
-          return [
+          updated = [
             ...prev,
             {
               time: barTime,
@@ -95,13 +119,17 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
               volume: bar.volume,
             },
           ];
+        } else {
+          return prev;
         }
 
-        return prev;
+        // Update the cache
+        candleCache.set(key, updated);
+        return updated;
       });
     });
     return unsub;
-  }, [symbol, barSeconds, subscribe]);
+  }, [symbol, barSeconds, subscribe, key]);
 
   return { candles, lastTick, loading };
 }
