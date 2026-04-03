@@ -1,3 +1,5 @@
+import asyncio
+import concurrent.futures
 import logging
 from typing import Callable
 
@@ -21,25 +23,41 @@ logger = logging.getLogger(__name__)
 class IBBroker(BaseBroker):
     """Interactive Brokers implementation using ib_insync."""
 
-    def __init__(self):
-        self._ib = IB()
+    def __init__(self, ib_instance: IB | None = None, executor: concurrent.futures.ThreadPoolExecutor | None = None):
+        self._ib = ib_instance or IB()
+        self._executor = executor
         self._order_status_callbacks: list[Callable] = []
         self._execution_callbacks: list[Callable] = []
         self._connection_callbacks: list[Callable] = []
 
+    async def _run(self, fn, *args, **kwargs):
+        """Run a sync ib_insync call in the IB thread pool."""
+        if self._executor:
+            def _call():
+                loop = asyncio.get_event_loop()
+                if loop is None or loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                return fn(*args, **kwargs)
+            return await asyncio.get_event_loop().run_in_executor(self._executor, _call)
+        return fn(*args, **kwargs)
+
     async def connect(self) -> None:
-        logger.info(
-            "Connecting to IB Gateway at %s:%d (client_id=%d)",
-            settings.ib_host,
-            settings.ib_port,
-            settings.ib_client_id,
-        )
-        self._ib.connect(
-            host=settings.ib_host,
-            port=settings.ib_port,
-            clientId=settings.ib_client_id,
-            readonly=False,
-        )
+        if self._ib.isConnected():
+            logger.info("IBBroker using existing IB connection")
+        else:
+            logger.info(
+                "Connecting to IB Gateway at %s:%d (client_id=%d)",
+                settings.ib_host,
+                settings.ib_port,
+                settings.ib_client_id,
+            )
+            self._ib.connect(
+                host=settings.ib_host,
+                port=settings.ib_port,
+                clientId=settings.ib_client_id,
+                readonly=False,
+            )
 
         # Register event handlers
         self._ib.orderStatusEvent += self._handle_order_status
@@ -47,7 +65,7 @@ class IBBroker(BaseBroker):
         self._ib.connectedEvent += lambda: self._handle_connection(True)
         self._ib.disconnectedEvent += lambda: self._handle_connection(False)
 
-        logger.info("Connected to IB Gateway")
+        logger.info("IBBroker ready")
 
     async def disconnect(self) -> None:
         if self._ib.isConnected():
@@ -138,21 +156,24 @@ class IBBroker(BaseBroker):
         limit_price: float | None = None,
         stop_price: float | None = None,
     ) -> int:
-        contract = make_ib_contract(symbol)
-        self._ib.qualifyContracts(contract)
+        def _place():
+            contract = make_ib_contract(symbol)
+            self._ib.qualifyContracts(contract)
 
-        if order_type == "MARKET":
-            order = MarketOrder(side, quantity)
-        elif order_type == "LIMIT":
-            order = LimitOrder(side, quantity, limit_price)
-        elif order_type == "STOP":
-            order = StopOrder(side, quantity, stop_price)
-        else:
-            raise ValueError(f"Unsupported order type: {order_type}")
+            if order_type == "MARKET":
+                order = MarketOrder(side, quantity)
+            elif order_type == "LIMIT":
+                order = LimitOrder(side, quantity, limit_price)
+            elif order_type == "STOP":
+                order = StopOrder(side, quantity, stop_price)
+            else:
+                raise ValueError(f"Unsupported order type: {order_type}")
 
-        trade = self._ib.placeOrder(contract, order)
-        logger.info("Placed %s %s %d %s @ %s", side, symbol.value, quantity, order_type, limit_price or stop_price or "MKT")
-        return trade.order.orderId
+            trade = self._ib.placeOrder(contract, order)
+            logger.info("Placed %s %s %d %s @ %s", side, symbol.value, quantity, order_type, limit_price or stop_price or "MKT")
+            return trade.order.orderId
+
+        return await self._run(_place)
 
     async def place_bracket_order(
         self,
@@ -164,38 +185,37 @@ class IBBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> BracketOrderResult:
-        contract = make_ib_contract(symbol)
-        self._ib.qualifyContracts(contract)
+        def _place():
+            contract = make_ib_contract(symbol)
+            self._ib.qualifyContracts(contract)
 
-        side = "BUY" if direction == DirectionEnum.LONG else "SELL"
-        exit_side = "SELL" if direction == DirectionEnum.LONG else "BUY"
+            side = "BUY" if direction == DirectionEnum.LONG else "SELL"
 
-        # Create bracket order using IB's bracket order mechanism
-        bracket = self._ib.bracketOrder(
-            action=side,
-            quantity=quantity,
-            limitPrice=entry_price or 0,
-            takeProfitPrice=target_price,
-            stopLossPrice=stop_price,
-        )
+            bracket = self._ib.bracketOrder(
+                action=side,
+                quantity=quantity,
+                limitPrice=entry_price or 0,
+                takeProfitPrice=target_price,
+                stopLossPrice=stop_price,
+            )
 
-        # If market order, change the parent order type
-        parent_order = bracket[0]
-        if entry_order_type == "MARKET":
-            parent_order.orderType = "MKT"
-            parent_order.lmtPrice = 0
+            parent_order = bracket[0]
+            if entry_order_type == "MARKET":
+                parent_order.orderType = "MKT"
+                parent_order.lmtPrice = 0
 
-        # Place all three orders
-        trades = []
-        for order in bracket:
-            trade = self._ib.placeOrder(contract, order)
-            trades.append(trade)
+            trades = []
+            for order in bracket:
+                trade = self._ib.placeOrder(contract, order)
+                trades.append(trade)
 
-        result = BracketOrderResult(
-            entry_order_id=trades[0].order.orderId,
-            target_order_id=trades[1].order.orderId,
-            stop_order_id=trades[2].order.orderId,
-        )
+            return BracketOrderResult(
+                entry_order_id=trades[0].order.orderId,
+                target_order_id=trades[1].order.orderId,
+                stop_order_id=trades[2].order.orderId,
+            )
+
+        result = await self._run(_place)
 
         logger.info(
             "Placed bracket order for %s %s: entry=%d, stop=%d, target=%d (stop=%.2f, target=%.2f)",
@@ -210,13 +230,16 @@ class IBBroker(BaseBroker):
         return result
 
     async def cancel_order(self, order_id: int) -> None:
-        trades = self._ib.trades()
-        for trade in trades:
-            if trade.order.orderId == order_id:
-                self._ib.cancelOrder(trade.order)
-                logger.info("Cancelled order %d", order_id)
-                return
-        logger.warning("Order %d not found for cancellation", order_id)
+        def _cancel():
+            trades = self._ib.trades()
+            for trade in trades:
+                if trade.order.orderId == order_id:
+                    self._ib.cancelOrder(trade.order)
+                    logger.info("Cancelled order %d", order_id)
+                    return
+            logger.warning("Order %d not found for cancellation", order_id)
+
+        await self._run(_cancel)
 
     async def modify_order(
         self,
@@ -225,20 +248,23 @@ class IBBroker(BaseBroker):
         stop_price: float | None = None,
         quantity: int | None = None,
     ) -> None:
-        trades = self._ib.trades()
-        for trade in trades:
-            if trade.order.orderId == order_id:
-                order = trade.order
-                if limit_price is not None:
-                    order.lmtPrice = limit_price
-                if stop_price is not None:
-                    order.auxPrice = stop_price
-                if quantity is not None:
-                    order.totalQuantity = quantity
-                self._ib.placeOrder(trade.contract, order)
-                logger.info("Modified order %d", order_id)
-                return
-        logger.warning("Order %d not found for modification", order_id)
+        def _modify():
+            trades = self._ib.trades()
+            for trade in trades:
+                if trade.order.orderId == order_id:
+                    order = trade.order
+                    if limit_price is not None:
+                        order.lmtPrice = limit_price
+                    if stop_price is not None:
+                        order.auxPrice = stop_price
+                    if quantity is not None:
+                        order.totalQuantity = quantity
+                    self._ib.placeOrder(trade.contract, order)
+                    logger.info("Modified order %d", order_id)
+                    return
+            logger.warning("Order %d not found for modification", order_id)
+
+        await self._run(_modify)
 
     def on_order_status(self, callback: Callable) -> None:
         self._order_status_callbacks.append(callback)

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ib_insync import IB
 
 from src.api.routes import market_data, orders, positions
+from src.broker.ib_broker import IBBroker
 from src.api.routes import settings as settings_routes
 from src.api.routes import signals, strategy, trades, ws
 from src.api.routes.ws import manager
@@ -72,6 +73,11 @@ async def lifespan(app: FastAPI):
 
         # Enable delayed data if no real-time subscription
         await run_ib(ib.reqMarketDataType, 4)  # 4 = delayed-frozen
+
+        # Create broker and wire to orders route for manual trading
+        broker = IBBroker(ib_instance=ib, executor=_ib_executor)
+        orders.set_broker(broker)
+        logger.info("Broker wired to orders API — manual trading enabled")
 
         # Subscribe to market data for ES and NQ
         _streaming_task = asyncio.create_task(_start_market_data_streaming())
