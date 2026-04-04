@@ -15,29 +15,26 @@ import {
   type HistogramData,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/types";
-import { formatDate } from "@/lib/timezone";
+import { formatDate, getTimezoneOffsetSec } from "@/lib/timezone";
 
-// RTH hours in ET: 9:30 AM - 4:00 PM
-const RTH_START_HOUR = 9;
-const RTH_START_MIN = 30;
-const RTH_END_HOUR = 16;
-const RTH_END_MIN = 0;
+// RTH is always 9:30 AM - 4:00 PM Eastern Time
+// Pre-compute ET offset in seconds from UTC
+function getETOffsetSec(): number {
+  const now = new Date();
+  const utcStr = now.toLocaleString("en-US", { timeZone: "UTC" });
+  const etStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  return (new Date(etStr).getTime() - new Date(utcStr).getTime()) / 1000;
+}
+const ET_OFFSET_SEC = getETOffsetSec();
 
 function isRTH(localEpoch: number): boolean {
-  // localEpoch is already shifted to display timezone by useMarketData
-  // We need to check ET hours — but the shift was to the configured display TZ
-  // For RTH we always check ET, so we need to compute ET time from the shifted epoch
-  // Since the epoch was shifted by display TZ offset, we need to undo that and apply ET offset
-  // Simpler: just check the UTC hours of the raw epoch
-  // Actually, the localEpoch has already been adjusted — the UTC hours of this value
-  // represent the display timezone's local time
-  const d = new Date(localEpoch * 1000);
-  const h = d.getUTCHours();
-  const m = d.getUTCMinutes();
-  const totalMin = h * 60 + m;
-  const rthStart = RTH_START_HOUR * 60 + RTH_START_MIN; // 570
-  const rthEnd = RTH_END_HOUR * 60 + RTH_END_MIN; // 960
-  return totalMin >= rthStart && totalMin < rthEnd;
+  // localEpoch is shifted by display TZ. Undo that, apply ET offset instead.
+  const displayOffset = getTimezoneOffsetSec();
+  const utcEpoch = localEpoch - displayOffset;
+  const etEpoch = utcEpoch + ET_OFFSET_SEC;
+  const d = new Date(etEpoch * 1000);
+  const totalMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return totalMin >= 570 && totalMin < 960; // 9:30=570, 16:00=960
 }
 
 interface TradingChartProps {
