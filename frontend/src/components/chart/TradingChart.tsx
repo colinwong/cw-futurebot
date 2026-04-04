@@ -156,8 +156,17 @@ export default function TradingChart({
   // Set candle + volume + RTH data
   const prevLengthRef = useRef(0);
   const initialLoadDone = useRef(false);
+  const prevFirstTime = useRef<number>(0);
   useEffect(() => {
     if (!candleSeriesRef.current || !chartRef.current || !volumeSeriesRef.current || candles.length === 0) return;
+
+    // Detect timeframe change — if first candle time changed, force full reload
+    const firstTime = candles[0].time;
+    if (firstTime !== prevFirstTime.current) {
+      initialLoadDone.current = false;
+      prevLengthRef.current = 0;
+      prevFirstTime.current = firstTime;
+    }
 
     // RTH candles get full colors, non-RTH get dimmer colors
     const candleData: CandlestickData<Time>[] = candles.map((c) => {

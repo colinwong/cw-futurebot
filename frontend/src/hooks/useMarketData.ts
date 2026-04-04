@@ -46,10 +46,20 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
   const barSeconds = BAR_SIZES[barSize] || 300;
   const historicalLoaded = useRef(loadedKeys.has(key));
 
-  // Fetch historical candles (skip if cached)
+  // Fetch historical candles — always re-fetch on timeframe change to get fresh data
+  const prevKey = useRef(key);
   useEffect(() => {
-    if (candleCache.has(key)) {
-      setCandles(candleCache.get(key)!);
+    const keyChanged = prevKey.current !== key;
+    prevKey.current = key;
+
+    // If switching timeframe, invalidate the old cache and force a full reload
+    if (keyChanged) {
+      historicalLoaded.current = false;
+    }
+
+    // Use cache only for initial mount (same key), not for timeframe switches
+    if (!keyChanged && candleCache.has(key)) {
+      setCandles([...candleCache.get(key)!]); // spread to create new reference
       setLoading(false);
       historicalLoaded.current = true;
       return;
