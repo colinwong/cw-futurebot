@@ -33,7 +33,7 @@ export default function PositionsAndOrders() {
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const { subscribe } = useWebSocket();
-  const { closePosition, cancel, loading } = useOrders();
+  const { closePosition, cancel, isActionLoading, error } = useOrders();
 
   const fetchAll = () => {
     getPositions(true)
@@ -75,8 +75,14 @@ export default function PositionsAndOrders() {
 
   if (positions.length === 0 && standaloneOrders.length === 0) return null;
 
+  // Show error banner if any action failed
+  const errorBanner = error ? (
+    <div className="text-xs text-red-400 bg-red-900/30 px-3 py-1 rounded mb-1">{error}</div>
+  ) : null;
+
   return (
     <div className="border-t border-gray-800 bg-gray-900 px-4 py-2">
+      {errorBanner}
       {/* Positions with grouped orders */}
       {positions.length > 0 && (
         <>
@@ -109,10 +115,10 @@ export default function PositionsAndOrders() {
                     </div>
                     <button
                       onClick={() => closePosition(pos.symbol, pos.id)}
-                      disabled={loading}
-                      className="px-2 py-0.5 text-xs bg-red-900 hover:bg-red-800 text-red-300 rounded"
+                      disabled={isActionLoading(`close-${pos.id}`)}
+                      className="px-2 py-0.5 text-xs bg-red-900 hover:bg-red-800 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Close
+                      {isActionLoading(`close-${pos.id}`) ? "Closing..." : "Close"}
                     </button>
                   </div>
 
@@ -133,10 +139,10 @@ export default function PositionsAndOrders() {
                           </div>
                           <button
                             onClick={() => cancel(order.id)}
-                            disabled={loading}
-                            className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-xs"
+                            disabled={isActionLoading(`cancel-${order.id}`)}
+                            className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Cancel
+                            {isActionLoading(`cancel-${order.id}`) ? "..." : "Cancel"}
                           </button>
                         </div>
                       ))}
@@ -169,10 +175,10 @@ export default function PositionsAndOrders() {
                 </div>
                 <button
                   onClick={() => cancel(order.id)}
-                  disabled={loading}
-                  className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded"
+                  disabled={isActionLoading(`cancel-${order.id}`)}
+                  className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Cancel
+                  {isActionLoading(`cancel-${order.id}`) ? "..." : "Cancel"}
                 </button>
               </div>
             ))}

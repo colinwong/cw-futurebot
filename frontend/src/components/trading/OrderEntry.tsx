@@ -5,7 +5,7 @@ import { useOrders } from "@/hooks/useOrders";
 import type { Symbol } from "@/lib/types";
 
 export default function OrderEntry() {
-  const { placeBracket, loading, error } = useOrders();
+  const { placeBracket, placingOrder, error } = useOrders();
   const [symbol, setSymbol] = useState<Symbol>("ES");
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [quantity, setQuantity] = useState(1);
@@ -152,14 +152,14 @@ export default function OrderEntry() {
       {/* Submit */}
       <button
         type="submit"
-        disabled={loading || !stopPrice || !targetPrice}
+        disabled={placingOrder || !stopPrice || !targetPrice}
         className={`w-full py-1.5 text-xs font-bold rounded ${
           side === "BUY"
             ? "bg-green-600 hover:bg-green-700"
             : "bg-red-600 hover:bg-red-700"
         } text-white disabled:opacity-50`}
       >
-        {loading ? "Placing..." : `Place Bracket ${side}`}
+        {placingOrder ? "Placing..." : `Place Bracket ${side}`}
       </button>
 
       {error && <div className="text-xs text-red-400">{error}</div>}

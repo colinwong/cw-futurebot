@@ -4,8 +4,11 @@ import { useState, useCallback } from "react";
 import * as api from "@/lib/api";
 
 export function useOrders() {
-  const [loading, setLoading] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState(false);
+  const [actionInProgress, setActionInProgress] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+
+  const isActionLoading = useCallback((key: string) => !!actionInProgress[key], [actionInProgress]);
 
   const placeBracket = useCallback(
     async (data: {
@@ -17,16 +20,15 @@ export function useOrders() {
       stop_price: number;
       target_price: number;
     }) => {
-      setLoading(true);
+      setPlacingOrder(true);
       setError(null);
       try {
-        const result = await api.placeBracketOrder(data);
-        return result;
+        return await api.placeBracketOrder(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Order failed");
         throw e;
       } finally {
-        setLoading(false);
+        setPlacingOrder(false);
       }
     },
     []
@@ -34,7 +36,8 @@ export function useOrders() {
 
   const modify = useCallback(
     async (orderId: number, data: { limit_price?: number; stop_price?: number }) => {
-      setLoading(true);
+      const key = `modify-${orderId}`;
+      setActionInProgress((p) => ({ ...p, [key]: true }));
       setError(null);
       try {
         return await api.modifyOrder(orderId, data);
@@ -42,14 +45,15 @@ export function useOrders() {
         setError(e instanceof Error ? e.message : "Modify failed");
         throw e;
       } finally {
-        setLoading(false);
+        setActionInProgress((p) => ({ ...p, [key]: false }));
       }
     },
     []
   );
 
   const cancel = useCallback(async (orderId: number) => {
-    setLoading(true);
+    const key = `cancel-${orderId}`;
+    setActionInProgress((p) => ({ ...p, [key]: true }));
     setError(null);
     try {
       return await api.cancelOrder(orderId);
@@ -57,12 +61,13 @@ export function useOrders() {
       setError(e instanceof Error ? e.message : "Cancel failed");
       throw e;
     } finally {
-      setLoading(false);
+      setActionInProgress((p) => ({ ...p, [key]: false }));
     }
   }, []);
 
   const closePosition = useCallback(async (symbol: string, positionId?: number) => {
-    setLoading(true);
+    const key = `close-${positionId || symbol}`;
+    setActionInProgress((p) => ({ ...p, [key]: true }));
     setError(null);
     try {
       return await api.closePosition(symbol, positionId);
@@ -70,9 +75,9 @@ export function useOrders() {
       setError(e instanceof Error ? e.message : "Close failed");
       throw e;
     } finally {
-      setLoading(false);
+      setActionInProgress((p) => ({ ...p, [key]: false }));
     }
   }, []);
 
-  return { placeBracket, modify, cancel, closePosition, loading, error };
+  return { placeBracket, modify, cancel, closePosition, placingOrder, isActionLoading, error };
 }
