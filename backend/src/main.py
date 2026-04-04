@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI):
         # Startup reconciliation — detect DB/IB mismatches
         await _startup_reconciliation()
 
+        # Start periodic reconciliation loop
+        asyncio.create_task(_periodic_reconciliation_loop())
+
         # Subscribe to market data for ES and NQ
         _streaming_task = asyncio.create_task(_start_market_data_streaming())
     except Exception as e:
@@ -258,13 +261,25 @@ async def _startup_reconciliation():
             logger.info("Reconciliation OK — DB and IB in sync")
 
 
+async def _periodic_reconciliation_loop():
+    """Run reconciliation every reconciliation_interval seconds."""
+    while True:
+        await asyncio.sleep(settings.reconciliation_interval)
+        try:
+            await _startup_reconciliation()
+        except Exception:
+            logger.exception("Error in periodic reconciliation")
+
+
 def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
-    """Register IB callbacks to track order fills and update positions."""
+    """Register IB callbacks to track order fills, update positions, and broadcast events."""
     if not ib:
         return
 
+    from src.db.models import DirectionEnum as _Dir, TradeOutcome
+    from src.contracts import FUTURES_CONTRACTS
+
     def _on_order_status(trade):
-        """Called by ib_insync when an order status changes."""
         ib_order_id = trade.order.orderId
         status = trade.orderStatus.status
 
@@ -275,14 +290,12 @@ def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
             async def _process_fill():
                 try:
                     async with async_session() as session:
-                        # Find our Order record
-                        from sqlalchemy import select
                         result = await session.execute(
-                            select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
+                            _select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
                         )
                         order = result.scalars().first()
                         if not order:
-                            logger.warning("Fill for unknown ib_order_id %d", ib_order_id)
+                            logger.warning("Fill for unknown ib_order_id %d — skipping", ib_order_id)
                             return
 
                         # Update order status
@@ -300,39 +313,98 @@ def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
                         )
                         session.add(fill)
 
-                        # If this is an entry order (BUY for LONG, or SELL for SHORT),
-                        # update the Position's entry_price
-                        if order.order_type.value == "MARKET" or order.order_type.value == "LIMIT":
-                            # Find position created around the same time with matching symbol
-                            pos_result = await session.execute(
-                                select(Position).where(
+                        # Determine if this is an ENTRY fill or EXIT fill
+                        # Entry: position with entry_price=0 and matching symbol (unfilled entry)
+                        # Exit: position that is open, and this order is the opposite side
+                        pos_updated = False
+
+                        # Check for entry fill (position with no entry price yet)
+                        entry_pos_result = await session.execute(
+                            _select(Position).where(
+                                Position.symbol == order.symbol,
+                                Position.is_open.is_(True),
+                                Position.entry_price == 0,
+                            )
+                        )
+                        entry_pos = entry_pos_result.scalars().first()
+                        if entry_pos:
+                            entry_pos.entry_price = fill_price
+                            entry_pos.entry_timestamp = _datetime.now(_tz.utc)
+                            logger.info("Entry fill: Position %d %s @ %.2f", entry_pos.id, entry_pos.symbol.value, fill_price)
+                            pos_updated = True
+
+                        # Check for exit fill (close order for an open position)
+                        if not pos_updated:
+                            # Exit fill: find open position where this order closes it
+                            # (opposite side — BUY closes SHORT, SELL closes LONG)
+                            if order.side.value == "BUY":
+                                exit_dir = _Dir.SHORT
+                            else:
+                                exit_dir = _Dir.LONG
+
+                            exit_pos_result = await session.execute(
+                                _select(Position).where(
                                     Position.symbol == order.symbol,
+                                    Position.direction == exit_dir,
                                     Position.is_open.is_(True),
-                                    Position.entry_price == 0,
                                 )
                             )
-                            position = pos_result.scalars().first()
-                            if position:
-                                position.entry_price = fill_price
-                                logger.info(
-                                    "Position %d entry price updated: %s @ %.2f",
-                                    position.id, position.symbol.value, fill_price,
-                                )
+                            exit_pos = exit_pos_result.scalars().first()
+                            if exit_pos:
+                                exit_pos.is_open = False
+                                exit_pos.exit_price = fill_price
+                                exit_pos.exit_timestamp = _datetime.now(_tz.utc)
+
+                                # Calculate P&L
+                                if exit_pos.entry_price > 0:
+                                    spec = FUTURES_CONTRACTS.get(exit_pos.symbol)
+                                    multiplier = spec["multiplier"] if spec else 50
+                                    if exit_pos.direction == _Dir.LONG:
+                                        pnl = (fill_price - exit_pos.entry_price) * multiplier * exit_pos.quantity
+                                    else:
+                                        pnl = (exit_pos.entry_price - fill_price) * multiplier * exit_pos.quantity
+
+                                    hold_secs = int((exit_pos.exit_timestamp - exit_pos.entry_timestamp).total_seconds())
+                                    outcome = TradeOutcome(
+                                        position_id=exit_pos.id,
+                                        pnl=pnl,
+                                        hold_duration_seconds=hold_secs,
+                                    )
+                                    session.add(outcome)
+                                    logger.info("Exit fill: Position %d closed @ %.2f, P&L=$%.2f", exit_pos.id, fill_price, pnl)
+                                else:
+                                    logger.info("Exit fill: Position %d closed @ %.2f (no entry price, P&L unknown)", exit_pos.id, fill_price)
+                                pos_updated = True
 
                         await session.commit()
-                        logger.info(
-                            "Fill recorded: ib_order=%d, price=%.2f, qty=%d",
-                            ib_order_id, fill_price, filled_qty,
-                        )
+                        logger.info("Fill recorded: ib_order=%d, price=%.2f, qty=%d", ib_order_id, fill_price, filled_qty)
 
-                        # Broadcast to UI
+                        # Broadcast ALL relevant events to UI
                         await manager.broadcast("order", {
+                            "action": "filled",
                             "ib_order_id": ib_order_id,
-                            "status": "FILLED",
+                            "symbol": order.symbol.value,
+                            "side": order.side.value,
                             "fill_price": fill_price,
                             "quantity": filled_qty,
                         })
                         await manager.broadcast("position", {"action": "updated"})
+
+                        # Broadcast account update so P&L reflects immediately
+                        try:
+                            summary = await run_ib(ib.accountSummary)
+                            values = {}
+                            for item in summary:
+                                values[item.tag] = item.value
+                            await manager.broadcast("account", {
+                                "balance": float(values.get("NetLiquidation", 0)),
+                                "unrealized_pnl": float(values.get("UnrealizedPnL", 0)),
+                                "realized_pnl": float(values.get("RealizedPnL", 0)),
+                                "margin_used": float(values.get("InitMarginReq", 0)),
+                                "buying_power": float(values.get("BuyingPower", 0)),
+                            })
+                        except Exception:
+                            pass  # Account update is best-effort
 
                 except Exception:
                     logger.exception("Error processing fill for ib_order=%d", ib_order_id)

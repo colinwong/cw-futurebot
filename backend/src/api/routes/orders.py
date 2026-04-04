@@ -193,6 +193,12 @@ async def place_bracket_order(
     session.add(protective)
     await session.commit()
 
+    # Broadcast so UI updates immediately
+    from src.api.routes.ws import manager
+    import asyncio
+    asyncio.ensure_future(manager.broadcast("position", {"action": "new", "position_id": position.id}))
+    asyncio.ensure_future(manager.broadcast("order", {"action": "new_bracket"}))
+
     return {
         "entry_order_id": result.entry_order_id,
         "stop_order_id": result.stop_order_id,
@@ -251,7 +257,8 @@ async def close_position(
     position_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Close an open position at market. Cancels protective orders first."""
+    """Close an open position at market. Cancels protective orders first.
+    Does NOT mark position closed — the fill callback handles that."""
     broker = _require_broker()
 
     if position_id:
@@ -280,29 +287,44 @@ async def close_position(
                 try:
                     await broker.cancel_order(ib_id)
                 except Exception:
-                    pass  # Order may already be filled/cancelled
+                    pass
         protective.status = ProtectiveOrderStatusEnum.CANCELLED
 
-        # Cancel the orders in DB too
-        for order_id in [protective.stop_order_id, protective.target_order_id]:
-            if order_id:
-                ord_result = await session.execute(select(Order).where(Order.id == order_id))
+        for oid in [protective.stop_order_id, protective.target_order_id]:
+            if oid:
+                ord_result = await session.execute(select(Order).where(Order.id == oid))
                 order = ord_result.scalars().first()
                 if order and order.status == OrderStatusEnum.SUBMITTED:
                     order.status = OrderStatusEnum.CANCELLED
 
-    # Place the close order
-    exit_side = "SELL" if position.direction == DirectionEnum.LONG else "BUY"
-    order_id = await broker.place_order(
+    # Place the close order and PERSIST it so fill callback can find it
+    exit_side = OrderSideEnum.SELL if position.direction == DirectionEnum.LONG else OrderSideEnum.BUY
+    ib_order_id = await broker.place_order(
         symbol=symbol,
-        side=exit_side,
+        side=exit_side.value,
         order_type="MARKET",
         quantity=position.quantity,
     )
 
-    # Mark position as closed
-    position.is_open = False
-    position.exit_timestamp = datetime.now(timezone.utc)
+    close_order = Order(
+        symbol=symbol,
+        side=exit_side,
+        order_type=OrderTypeEnum.MARKET,
+        quantity=position.quantity,
+        ib_order_id=ib_order_id,
+        status=OrderStatusEnum.SUBMITTED,
+        is_manual=True,
+    )
+    session.add(close_order)
     await session.commit()
 
-    return {"order_id": order_id, "action": f"Closing {position.direction.value} {symbol.value} at market"}
+    # Broadcast so UI updates
+    from src.api.routes.ws import manager
+    import asyncio
+    asyncio.ensure_future(manager.broadcast("order", {"action": "close_submitted", "symbol": symbol.value, "ib_order_id": ib_order_id}))
+
+    return {
+        "order_id": ib_order_id,
+        "close_order_db_id": close_order.id,
+        "action": f"Close order submitted for {position.direction.value} {symbol.value}. Position will close when order fills.",
+    }

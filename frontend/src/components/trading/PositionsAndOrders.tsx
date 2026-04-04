@@ -114,7 +114,12 @@ export default function PositionsAndOrders() {
                       <span className="text-gray-600">{formatTime(pos.entry_timestamp)}</span>
                     </div>
                     <button
-                      onClick={() => closePosition(pos.symbol, pos.id)}
+                      onClick={async () => {
+                        try {
+                          await closePosition(pos.symbol, pos.id);
+                          fetchAll();
+                        } catch { /* error shown in banner */ }
+                      }}
                       disabled={isActionLoading(`close-${pos.id}`)}
                       className="px-2 py-0.5 text-xs bg-red-900 hover:bg-red-800 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -138,7 +143,9 @@ export default function PositionsAndOrders() {
                             <span className="text-gray-600">{order.status}</span>
                           </div>
                           <button
-                            onClick={() => cancel(order.id)}
+                            onClick={async () => {
+                              try { await cancel(order.id); fetchAll(); } catch {}
+                            }}
                             disabled={isActionLoading(`cancel-${order.id}`)}
                             className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           >
@@ -174,7 +181,9 @@ export default function PositionsAndOrders() {
                   <span className="text-gray-600">{formatTime(order.timestamp)}</span>
                 </div>
                 <button
-                  onClick={() => cancel(order.id)}
+                  onClick={async () => {
+                    try { await cancel(order.id); fetchAll(); } catch {}
+                  }}
                   disabled={isActionLoading(`cancel-${order.id}`)}
                   className="px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                 >
