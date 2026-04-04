@@ -25,6 +25,8 @@ from src.db.models import (
     OrderStatusEnum,
     Position,
     SentimentEnum,
+    SystemEvent,
+    SystemEventTypeEnum,
 )
 from src.news.analyzer import NewsAnalyzer
 from src.news.factory import create_news_provider
@@ -89,6 +91,9 @@ async def lifespan(app: FastAPI):
 
         # Register fill tracking callback
         _setup_fill_tracking(asyncio.get_event_loop())
+
+        # Startup reconciliation — detect DB/IB mismatches
+        await _startup_reconciliation()
 
         # Subscribe to market data for ES and NQ
         _streaming_task = asyncio.create_task(_start_market_data_streaming())
@@ -170,6 +175,77 @@ async def lifespan(app: FastAPI):
 
 import time as _time
 from datetime import datetime as _datetime, timezone as _tz
+from sqlalchemy import select as _select
+
+
+async def _startup_reconciliation():
+    """Compare DB state vs IB state on startup. Fix mismatches."""
+    if not ib:
+        return
+
+    logger.info("Running startup reconciliation...")
+
+    # Get IB positions
+    ib_positions = await run_ib(ib.positions)
+    ib_pos_map = {}
+    for p in ib_positions:
+        if p.position != 0 and p.contract.secType == "FUT":
+            ib_pos_map[p.contract.symbol] = {
+                "qty": int(p.position),
+                "avg_price": p.avgCost / (50 if p.contract.symbol == "ES" else 20),  # IB avgCost includes multiplier
+            }
+
+    # Get IB open orders
+    ib_orders = await run_ib(ib.openOrders)
+    ib_order_ids = {o.orderId for o in ib_orders}
+
+    async with async_session() as session:
+        # Get DB open positions
+        result = await session.execute(
+            _select(Position).where(Position.is_open.is_(True))
+        )
+        db_positions = {pos.symbol.value: pos for pos in result.scalars().all()}
+
+        discrepancies = []
+
+        # Check: DB says open but IB has no position
+        for symbol, db_pos in db_positions.items():
+            if symbol not in ib_pos_map:
+                discrepancies.append(f"DB has open {db_pos.direction.value} {symbol} but IB has no position — marking closed")
+                db_pos.is_open = False
+                db_pos.exit_timestamp = _datetime.now(_tz.utc)
+
+        # Check: IB has position but DB doesn't
+        for symbol, ib_info in ib_pos_map.items():
+            if symbol not in db_positions:
+                direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
+                discrepancies.append(f"IB has {direction} {symbol} x{abs(ib_info['qty'])} but DB has no open position — orphaned at IB")
+
+        # Check: DB has submitted orders that IB doesn't have
+        from src.db.models import Order as OrderModel
+        result = await session.execute(
+            _select(OrderModel).where(OrderModel.status == OrderStatusEnum.SUBMITTED)
+        )
+        for order in result.scalars().all():
+            if order.ib_order_id and order.ib_order_id not in ib_order_ids:
+                discrepancies.append(f"DB order {order.ib_order_id} ({order.side.value} {order.symbol.value}) is SUBMITTED but not at IB — marking cancelled")
+                order.status = OrderStatusEnum.CANCELLED
+
+        await session.commit()
+
+        if discrepancies:
+            logger.warning("Reconciliation found %d discrepancies:", len(discrepancies))
+            for d in discrepancies:
+                logger.warning("  %s", d)
+
+            # Log system event
+            session.add(SystemEvent(
+                event_type=SystemEventTypeEnum.RECONCILIATION,
+                details={"discrepancies": discrepancies},
+            ))
+            await session.commit()
+        else:
+            logger.info("Reconciliation OK — DB and IB in sync")
 
 
 def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
