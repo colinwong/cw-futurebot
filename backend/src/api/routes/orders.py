@@ -103,6 +103,26 @@ async def place_bracket_order(
 
     direction = DirectionEnum.LONG if req.side == OrderSideEnum.BUY else DirectionEnum.SHORT
 
+    # Risk check: block if there's already an open position on this symbol
+    existing = await session.execute(
+        select(Position).where(
+            Position.symbol == req.symbol,
+            Position.is_open.is_(True),
+        )
+    )
+    existing_pos = existing.scalars().first()
+    if existing_pos:
+        if existing_pos.direction == direction:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Already have an open {direction.value} position in {req.symbol.value}. Close it first.",
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Conflicting {existing_pos.direction.value} position already open in {req.symbol.value}. Close it before opening a {direction.value}.",
+            )
+
     result = await broker.place_bracket_order(
         symbol=req.symbol,
         direction=direction,

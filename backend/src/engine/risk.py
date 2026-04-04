@@ -134,24 +134,30 @@ class RiskManager:
     async def _check_duplicate_position(
         self, symbol: SymbolEnum, direction: DirectionEnum, session: AsyncSession
     ) -> RiskCheckResult:
+        # Block any open position on this symbol — no conflicting or duplicate positions
         result = await session.execute(
             select(Position).where(
                 Position.symbol == symbol,
-                Position.direction == direction,
                 Position.is_open.is_(True),
             )
         )
         existing = result.scalars().first()
 
         passed = existing is None
+        if existing:
+            if existing.direction == direction:
+                msg = f"Already have an open {direction.value} position in {symbol.value}"
+            else:
+                msg = f"Conflicting {existing.direction.value} position already open in {symbol.value} — close it first"
+        else:
+            msg = "No existing position"
+
         return RiskCheckResult(
-            name="no_duplicate_position",
+            name="no_conflicting_position",
             passed=passed,
-            threshold="no existing position in same direction",
-            actual=f"existing {direction.value} position" if existing else "no duplicate",
-            message=f"Already have an open {direction.value} position in {symbol.value}"
-            if not passed
-            else "No conflicting position",
+            threshold="no existing open position on this symbol",
+            actual=f"existing {existing.direction.value} position" if existing else "none",
+            message=msg,
         )
 
     async def _check_daily_loss(self, session: AsyncSession) -> RiskCheckResult:
