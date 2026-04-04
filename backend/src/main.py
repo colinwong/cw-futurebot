@@ -215,11 +215,21 @@ async def _startup_reconciliation():
                 db_pos.is_open = False
                 db_pos.exit_timestamp = _datetime.now(_tz.utc)
 
-        # Check: IB has position but DB doesn't
+        # Check: IB has position but DB doesn't — create a Position so UI can manage it
         for symbol, ib_info in ib_pos_map.items():
             if symbol not in db_positions:
+                from src.db.models import DirectionEnum as _Dir, SymbolEnum as _Sym
                 direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
-                discrepancies.append(f"IB has {direction} {symbol} x{abs(ib_info['qty'])} but DB has no open position — orphaned at IB")
+                new_pos = Position(
+                    symbol=_Sym(symbol),
+                    direction=_Dir(direction),
+                    quantity=abs(ib_info["qty"]),
+                    entry_price=ib_info["avg_price"],
+                    entry_timestamp=_datetime.now(_tz.utc),
+                    is_open=True,
+                )
+                session.add(new_pos)
+                discrepancies.append(f"IB has {direction} {symbol} x{abs(ib_info['qty'])} @ {ib_info['avg_price']:.2f} — created Position in DB for management")
 
         # Check: DB has submitted orders that IB doesn't have
         from src.db.models import Order as OrderModel
