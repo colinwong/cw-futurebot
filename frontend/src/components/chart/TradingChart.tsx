@@ -68,6 +68,7 @@ export default function TradingChart({
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const rthBgSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,6 +109,18 @@ export default function TradingChart({
       height,
     });
 
+    // RTH background shading — histogram that fills full height for non-RTH bars
+    // Added BEFORE candlestick series so it renders behind
+    const rthBgSeries = chart.addSeries(HistogramSeries, {
+      priceScaleId: "rthBg",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    chart.priceScale("rthBg").applyOptions({
+      scaleMargins: { top: 0, bottom: 0 },
+      visible: false,
+    });
+
     // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#26a69a",
@@ -129,6 +142,7 @@ export default function TradingChart({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    rthBgSeriesRef.current = rthBgSeries;
 
     // Create markers plugin
     markersRef.current = createSeriesMarkers(candleSeries, []);
@@ -146,6 +160,7 @@ export default function TradingChart({
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      rthBgSeriesRef.current = null;
       markersRef.current = null;
       priceLinesRef.current = [];
       initialLoadDone.current = false;
@@ -168,28 +183,20 @@ export default function TradingChart({
       prevFirstTime.current = firstTime;
     }
 
-    // RTH candles get full colors, non-RTH get dimmer colors
-    const candleData: CandlestickData<Time>[] = candles.map((c) => {
-      const rth = isRTH(c.time);
-      const up = c.close >= c.open;
-      return {
-        time: c.time as Time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-        // Non-RTH candles are dimmer
-        color: rth
-          ? (up ? "#26a69a" : "#ef5350")
-          : (up ? "#1a6e66" : "#8a3030"),
-        wickColor: rth
-          ? (up ? "#26a69a" : "#ef5350")
-          : (up ? "#1a6e66" : "#8a3030"),
-        borderColor: rth
-          ? (up ? "#26a69a" : "#ef5350")
-          : (up ? "#1a6e66" : "#8a3030"),
-      };
-    });
+    const candleData: CandlestickData<Time>[] = candles.map((c) => ({
+      time: c.time as Time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+
+    // RTH background — light gray bars for non-RTH periods
+    const rthBgData: HistogramData<Time>[] = candles.map((c) => ({
+      time: c.time as Time,
+      value: isRTH(c.time) ? 0 : 1,
+      color: isRTH(c.time) ? "transparent" : "rgba(255, 255, 255, 0.03)",
+    }));
 
     const volumeData: HistogramData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
@@ -198,6 +205,7 @@ export default function TradingChart({
     }));
 
     if (!initialLoadDone.current || candles.length < prevLengthRef.current) {
+      if (rthBgSeriesRef.current) rthBgSeriesRef.current.setData(rthBgData);
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
@@ -205,18 +213,20 @@ export default function TradingChart({
       initialLoadDone.current = true;
     } else {
       const last = candles[candles.length - 1];
-      const rth = isRTH(last.time);
-      const up = last.close >= last.open;
       candleSeriesRef.current.update({
         time: last.time as Time,
         open: last.open,
         high: last.high,
         low: last.low,
         close: last.close,
-        color: rth ? (up ? "#26a69a" : "#ef5350") : (up ? "#1a6e66" : "#8a3030"),
-        wickColor: rth ? (up ? "#26a69a" : "#ef5350") : (up ? "#1a6e66" : "#8a3030"),
-        borderColor: rth ? (up ? "#26a69a" : "#ef5350") : (up ? "#1a6e66" : "#8a3030"),
       });
+      if (rthBgSeriesRef.current) {
+        rthBgSeriesRef.current.update({
+          time: last.time as Time,
+          value: isRTH(last.time) ? 0 : 1,
+          color: isRTH(last.time) ? "transparent" : "rgba(255, 255, 255, 0.03)",
+        });
+      }
       volumeSeriesRef.current.update({
         time: last.time as Time,
         value: last.volume,
