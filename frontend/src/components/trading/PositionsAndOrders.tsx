@@ -108,7 +108,7 @@ export default function PositionsAndOrders() {
                       <span className="text-gray-600">{formatTime(pos.entry_timestamp)}</span>
                     </div>
                     <button
-                      onClick={() => closePosition(pos.symbol)}
+                      onClick={() => closePosition(pos.symbol, pos.id)}
                       disabled={loading}
                       className="px-2 py-0.5 text-xs bg-red-900 hover:bg-red-800 text-red-300 rounded"
                     >

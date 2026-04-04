@@ -59,8 +59,10 @@ export function cancelOrder(orderId: number) {
   return fetchApi<{ status: string }>(`/api/orders/${orderId}`, { method: "DELETE" });
 }
 
-export function closePosition(symbol: string) {
-  return fetchApi<{ order_id: number }>(`/api/orders/close-position?symbol=${symbol}`, {
+export function closePosition(symbol: string, positionId?: number) {
+  const params = new URLSearchParams({ symbol });
+  if (positionId) params.set("position_id", String(positionId));
+  return fetchApi<{ order_id: number }>(`/api/orders/close-position?${params}`, {
     method: "POST",
   });
 }

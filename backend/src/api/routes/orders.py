@@ -15,6 +15,7 @@ from src.db.models import (
     OrderTypeEnum,
     Position,
     ProtectiveOrder,
+    ProtectiveOrderStatusEnum,
     SymbolEnum,
 )
 
@@ -227,25 +228,61 @@ async def cancel_order(
 @router.post("/close-position")
 async def close_position(
     symbol: SymbolEnum,
+    position_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Close an open position at market."""
+    """Close an open position at market. Cancels protective orders first."""
     broker = _require_broker()
 
-    result = await session.execute(
-        select(Position).where(Position.symbol == symbol, Position.is_open.is_(True))
-    )
+    if position_id:
+        result = await session.execute(
+            select(Position).where(Position.id == position_id, Position.is_open.is_(True))
+        )
+    else:
+        result = await session.execute(
+            select(Position).where(Position.symbol == symbol, Position.is_open.is_(True))
+        )
     position = result.scalars().first()
     if not position:
         raise HTTPException(status_code=404, detail="No open position found")
 
-    exit_side = "SELL" if position.direction == DirectionEnum.LONG else "BUY"
+    # Cancel protective orders at IB first
+    prot_result = await session.execute(
+        select(ProtectiveOrder).where(
+            ProtectiveOrder.position_id == position.id,
+            ProtectiveOrder.status == ProtectiveOrderStatusEnum.ACTIVE,
+        )
+    )
+    protective = prot_result.scalars().first()
+    if protective:
+        for ib_id in [protective.stop_ib_order_id, protective.target_ib_order_id]:
+            if ib_id:
+                try:
+                    await broker.cancel_order(ib_id)
+                except Exception:
+                    pass  # Order may already be filled/cancelled
+        protective.status = ProtectiveOrderStatusEnum.CANCELLED
 
+        # Cancel the orders in DB too
+        for order_id in [protective.stop_order_id, protective.target_order_id]:
+            if order_id:
+                ord_result = await session.execute(select(Order).where(Order.id == order_id))
+                order = ord_result.scalars().first()
+                if order and order.status == OrderStatusEnum.SUBMITTED:
+                    order.status = OrderStatusEnum.CANCELLED
+
+    # Place the close order
+    exit_side = "SELL" if position.direction == DirectionEnum.LONG else "BUY"
     order_id = await broker.place_order(
         symbol=symbol,
         side=exit_side,
         order_type="MARKET",
         quantity=position.quantity,
     )
+
+    # Mark position as closed
+    position.is_open = False
+    position.exit_timestamp = datetime.now(timezone.utc)
+    await session.commit()
 
     return {"order_id": order_id, "action": f"Closing {position.direction.value} {symbol.value} at market"}

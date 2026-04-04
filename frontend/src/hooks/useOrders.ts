@@ -61,11 +61,11 @@ export function useOrders() {
     }
   }, []);
 
-  const closePosition = useCallback(async (symbol: string) => {
+  const closePosition = useCallback(async (symbol: string, positionId?: number) => {
     setLoading(true);
     setError(null);
     try {
-      return await api.closePosition(symbol);
+      return await api.closePosition(symbol, positionId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Close failed");
       throw e;
