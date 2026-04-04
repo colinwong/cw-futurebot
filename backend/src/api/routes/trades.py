@@ -27,9 +27,9 @@ async def list_trades(
     """List trade history (closed positions with outcomes)."""
     query = (
         select(Position)
-        .where(Position.is_open.is_(False))
+        .where(Position.is_open.is_(False), Position.exit_price.isnot(None))
         .options(selectinload(Position.trade_outcome))
-        .order_by(Position.exit_timestamp.desc())
+        .order_by(Position.exit_timestamp.desc().nullslast())
         .limit(limit)
         .offset(offset)
     )
