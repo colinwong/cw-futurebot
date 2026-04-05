@@ -117,6 +117,7 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
           height={400}
           markers={markers}
           horizontalLines={horizontalLines}
+          viewKey={`${symbol}|${barSize}`}
         />
       )}
     </div>

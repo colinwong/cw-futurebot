@@ -53,13 +53,19 @@ interface TradingChartProps {
     lineStyle: number;
     title: string;
   }>;
+  /** Unique key for this chart + timeframe combo, used to persist zoom level */
+  viewKey?: string;
 }
+
+// Module-level zoom state per viewKey (bars visible from the right)
+const savedVisibleBars: Record<string, number> = {};
 
 export default function TradingChart({
   candles,
   height = 400,
   markers = [],
   horizontalLines = [],
+  viewKey,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -169,6 +175,7 @@ export default function TradingChart({
   const prevLengthRef = useRef(0);
   const initialLoadDone = useRef(false);
   const prevFirstTime = useRef<number>(0);
+  const prevViewKey = useRef(viewKey || "");
   useEffect(() => {
     if (!candleSeriesRef.current || !chartRef.current || !volumeSeriesRef.current || candles.length === 0) return;
 
@@ -202,12 +209,33 @@ export default function TradingChart({
     }));
 
     if (!initialLoadDone.current || candles.length < prevLengthRef.current) {
+      // Save current zoom before switching
+      if (viewKey && initialLoadDone.current) {
+        try {
+          const range = chartRef.current.timeScale().getVisibleLogicalRange();
+          if (range) {
+            savedVisibleBars[prevViewKey.current] = Math.round(range.to - range.from);
+          }
+        } catch { /* ignore */ }
+      }
+
       if (rthBgSeriesRef.current) rthBgSeriesRef.current.setData(rthBgData);
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
-      chartRef.current.timeScale().fitContent();
+      // Restore saved zoom or fit content
+      const savedBars = viewKey ? savedVisibleBars[viewKey] : undefined;
+      if (savedBars && savedBars > 0) {
+        const totalBars = candles.length;
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: totalBars - savedBars,
+          to: totalBars,
+        });
+      } else {
+        chartRef.current.timeScale().fitContent();
+      }
       initialLoadDone.current = true;
+      prevViewKey.current = viewKey || "";
     } else {
       const last = candles[candles.length - 1];
       candleSeriesRef.current.update({
