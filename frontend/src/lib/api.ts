@@ -123,6 +123,13 @@ export function getLogs(limit = 200) {
   }>(`/api/logs?limit=${limit}`);
 }
 
+// System
+export function reconnectIB() {
+  return fetchApi<{ status: string; message: string }>("/api/system/reconnect-ib", {
+    method: "POST",
+  });
+}
+
 // Settings
 export function getSettings() {
   return fetchApi<{

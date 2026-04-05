@@ -64,14 +64,14 @@ async def run_ib(fn: Callable[..., T], *args, **kwargs) -> T:
     return await loop.run_in_executor(_ib_executor, _run)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global ib
-    logger.info("Starting cw-futurebot backend on port %d", settings.port)
+_broker_ref: IBBroker | None = None
 
-    # Connect to IB Gateway in the dedicated IB thread
-    ib = IB()
+
+async def _connect_ib() -> bool:
+    """Connect to IB Gateway and return True on success."""
+    global ib
     try:
+        ib = IB()
         await run_ib(
             ib.connect,
             host=settings.ib_host,
@@ -80,29 +80,90 @@ async def lifespan(app: FastAPI):
             readonly=False,
         )
         logger.info("Connected to IB Gateway at %s:%d", settings.ib_host, settings.ib_port)
-
-        # Enable delayed data if no real-time subscription
-        await run_ib(ib.reqMarketDataType, 4)  # 4 = delayed-frozen
-
-        # Create broker and wire to orders route for manual trading
-        broker = IBBroker(ib_instance=ib, executor=_ib_executor)
-        orders.set_broker(broker)
-        logger.info("Broker wired to orders API — manual trading enabled")
-
-        # Register fill tracking callback
-        _setup_fill_tracking(asyncio.get_event_loop())
-
-        # Startup reconciliation — detect DB/IB mismatches
-        await _startup_reconciliation()
-
-        # Start periodic reconciliation loop
-        asyncio.create_task(_periodic_reconciliation_loop())
-
-        # Subscribe to market data for ES and NQ
-        _streaming_task = asyncio.create_task(_start_market_data_streaming())
+        return True
     except Exception as e:
         logger.warning("Could not connect to IB Gateway: %s", e)
         ib = None
+        return False
+
+
+async def _post_connect_setup():
+    """Set up everything that depends on a live IB connection.
+    Called at startup and after every reconnect."""
+    global _broker_ref
+
+    # Enable delayed data if no real-time subscription
+    await run_ib(ib.reqMarketDataType, 4)
+
+    # Create/update broker for orders API
+    if _broker_ref is None:
+        _broker_ref = IBBroker(ib_instance=ib, executor=_ib_executor)
+        orders.set_broker(_broker_ref)
+    else:
+        _broker_ref._ib = ib  # Swap to new IB instance
+    logger.info("Broker wired to orders API")
+
+    # Register fill tracking callback on this IB instance
+    _setup_fill_tracking(asyncio.get_event_loop())
+
+    # Reconciliation
+    await _startup_reconciliation()
+
+    # Start market data streaming
+    asyncio.create_task(_start_market_data_streaming())
+
+    # Broadcast reconnect event to UI
+    await manager.broadcast("system", {"event": "ib_connected"})
+
+
+async def _reconnect_ib():
+    """Reconnect to IB Gateway after a disconnect."""
+    global ib
+    # Disconnect old instance cleanly
+    if ib is not None:
+        try:
+            await run_ib(ib.disconnect)
+        except Exception:
+            pass
+        ib = None
+
+    if await _connect_ib():
+        await _post_connect_setup()
+        return True
+    return False
+
+
+async def _ib_connection_monitor():
+    """Check IB connection every 5 seconds. Auto-reconnect if disconnected."""
+    await asyncio.sleep(10)  # Wait for initial startup to complete
+    while True:
+        await asyncio.sleep(5)
+        try:
+            if ib is None or not ib.isConnected():
+                logger.warning("IB disconnected — attempting auto-reconnect...")
+                success = await _reconnect_ib()
+                if success:
+                    logger.info("IB auto-reconnected successfully")
+                else:
+                    logger.warning("IB auto-reconnect failed — will retry in 5s")
+        except Exception:
+            logger.exception("Error in IB connection monitor")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global ib
+    logger.info("Starting cw-futurebot backend on port %d", settings.port)
+
+    # Initial IB connection
+    if await _connect_ib():
+        await _post_connect_setup()
+
+    # Start connection monitor (auto-reconnect)
+    asyncio.create_task(_ib_connection_monitor())
+
+    # Start periodic reconciliation loop
+    asyncio.create_task(_periodic_reconciliation_loop())
 
     # Start news provider + analyzer
     global _news_provider, _news_analyzer
@@ -538,6 +599,19 @@ app.include_router(ws.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/system/reconnect-ib")
+async def reconnect_ib():
+    """Manually trigger IB Gateway reconnection."""
+    try:
+        success = await _reconnect_ib()
+        if success:
+            return {"status": "connected", "message": "IB Gateway reconnected successfully"}
+        else:
+            return {"status": "failed", "message": "Could not connect to IB Gateway"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/status")

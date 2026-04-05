@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { getStatus } from "@/lib/api";
+import { getStatus, reconnectIB } from "@/lib/api";
 import type { AccountInfo } from "@/lib/types";
 
 export default function AccountBar() {
@@ -10,6 +10,20 @@ export default function AccountBar() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [ibConnected, setIbConnected] = useState(false);
   const [ibAccount, setIbAccount] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const handleReconnect = async () => {
+    setReconnecting(true);
+    try {
+      const res = await reconnectIB();
+      if (res.status === "connected") {
+        setIbConnected(true);
+      }
+    } catch { /* ignore */ }
+    finally {
+      setReconnecting(false);
+    }
+  };
 
   // Poll status endpoint every 10s
   useEffect(() => {
@@ -80,6 +94,15 @@ export default function AccountBar() {
           <span className="text-gray-500 text-xs">
             IB {ibConnected ? (ibAccount ?? "Connected") : "Disconnected"}
           </span>
+          {!ibConnected && (
+            <button
+              onClick={handleReconnect}
+              disabled={reconnecting}
+              className="px-1.5 py-0.5 text-xs bg-blue-800 hover:bg-blue-700 text-blue-200 rounded disabled:opacity-50"
+            >
+              {reconnecting ? "..." : "Reconnect"}
+            </button>
+          )}
         </div>
         {/* WebSocket status */}
         <div className="flex items-center gap-1.5">
