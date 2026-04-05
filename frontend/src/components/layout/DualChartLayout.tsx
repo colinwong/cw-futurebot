@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import TradingChart from "@/components/chart/TradingChart";
 import ChartTimeframe from "@/components/chart/ChartTimeframe";
 import { useMarketData, BAR_SIZES } from "@/hooks/useMarketData";
@@ -18,22 +18,28 @@ interface PositionOverlay {
   entry_timestamp: string;
 }
 
-// Module-level chart settings — persist across page navigations
-const chartSettings: Record<string, { barSize: string; duration: string }> = {};
+// Module-level: persist shared timeframe across page navigations
+let savedBarSize = "5 mins";
+let savedDuration = "2 D";
 
-function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: PositionOverlay[] }) {
-  const saved = chartSettings[symbol] || { barSize: "5 mins", duration: "2 D" };
-  const [barSize, setBarSize] = useState(saved.barSize);
-  const [duration, setDuration] = useState(saved.duration);
+function SymbolChart({
+  symbol,
+  positions,
+  barSize,
+  barSizeSec,
+  syncRange,
+  onRangeChange,
+}: {
+  symbol: Symbol;
+  positions: PositionOverlay[];
+  barSize: string;
+  barSizeSec: number;
+  syncRange: { from: number; to: number } | null;
+  onRangeChange: (range: { from: number; to: number }) => void;
+}) {
+  const duration = barSize === "1 day" ? "1 Y" : barSize === "4 hours" ? "1 M" : barSize === "1 hour" ? "1 W" : barSize === "15 mins" ? "5 D" : barSize === "5 mins" ? "2 D" : "1 D";
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
 
-  const handleTimeframe = (newBarSize: string, newDuration: string) => {
-    setBarSize(newBarSize);
-    setDuration(newDuration);
-    chartSettings[symbol] = { barSize: newBarSize, duration: newDuration };
-  };
-
-  // Generate chart overlays from positions
   const { markers, horizontalLines } = useMemo(() => {
     const m: Array<{
       time: number;
@@ -50,7 +56,6 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
     }> = [];
 
     for (const pos of positions) {
-      // Entry marker
       if (pos.entry_price > 0) {
         const entryEpoch = Math.floor(new Date(pos.entry_timestamp).getTime() / 1000) + getTimezoneOffsetSec();
         m.push({
@@ -60,37 +65,11 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
           shape: pos.direction === "LONG" ? "arrowUp" : "arrowDown",
           text: `${pos.direction} @ ${pos.entry_price.toFixed(2)}`,
         });
-
-        // Entry price line
-        lines.push({
-          price: pos.entry_price,
-          color: "#4a90d9",
-          lineStyle: 2, // dashed
-          title: `Entry ${pos.entry_price.toFixed(2)}`,
-        });
+        lines.push({ price: pos.entry_price, color: "#4a90d9", lineStyle: 2, title: `Entry ${pos.entry_price.toFixed(2)}` });
       }
-
-      // Stop line
-      if (pos.stop_price) {
-        lines.push({
-          price: pos.stop_price,
-          color: "#ef5350",
-          lineStyle: 2,
-          title: `Stop ${pos.stop_price.toFixed(2)}`,
-        });
-      }
-
-      // Target line
-      if (pos.target_price) {
-        lines.push({
-          price: pos.target_price,
-          color: "#26a69a",
-          lineStyle: 2,
-          title: `Target ${pos.target_price.toFixed(2)}`,
-        });
-      }
+      if (pos.stop_price) lines.push({ price: pos.stop_price, color: "#ef5350", lineStyle: 2, title: `Stop ${pos.stop_price.toFixed(2)}` });
+      if (pos.target_price) lines.push({ price: pos.target_price, color: "#26a69a", lineStyle: 2, title: `Target ${pos.target_price.toFixed(2)}` });
     }
-
     return { markers: m, horizontalLines: lines };
   }, [positions]);
 
@@ -105,7 +84,6 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
             </span>
           )}
         </div>
-        <ChartTimeframe selected={barSize} onSelect={handleTimeframe} />
       </div>
       {loading ? (
         <div className="flex items-center justify-center h-[400px] text-gray-500">
@@ -118,7 +96,9 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
           markers={markers}
           horizontalLines={horizontalLines}
           viewKey={`${symbol}|${barSize}`}
-          barSizeSec={BAR_SIZES[barSize] || 300}
+          barSizeSec={barSizeSec}
+          syncRange={syncRange}
+          onRangeChange={onRangeChange}
         />
       )}
     </div>
@@ -127,7 +107,27 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
 
 export default function DualChartLayout() {
   const [positions, setPositions] = useState<PositionOverlay[]>([]);
+  const [barSize, setBarSize] = useState(savedBarSize);
   const { subscribe } = useWebSocket();
+
+  // Synced visible range between charts
+  const [syncRange, setSyncRange] = useState<{ from: number; to: number } | null>(null);
+  const syncSource = useRef<string | null>(null);
+
+  const handleTimeframe = useCallback((newBarSize: string, _newDuration: string) => {
+    setBarSize(newBarSize);
+    savedBarSize = newBarSize;
+    setSyncRange(null); // Reset sync on timeframe change
+  }, []);
+
+  const makeRangeHandler = useCallback((source: string) => (range: { from: number; to: number }) => {
+    // Prevent infinite loop: only sync if this chart initiated the change
+    if (syncSource.current === source) return;
+    syncSource.current = source;
+    setSyncRange(range);
+    // Reset source after a tick to allow future syncs
+    setTimeout(() => { syncSource.current = null; }, 50);
+  }, []);
 
   useEffect(() => {
     getPositions(true)
@@ -135,7 +135,6 @@ export default function DualChartLayout() {
       .catch(console.error);
   }, []);
 
-  // Refresh positions when they change
   useEffect(() => {
     const unsub = subscribe("position", () => {
       getPositions(true)
@@ -147,11 +146,32 @@ export default function DualChartLayout() {
 
   const esPositions = positions.filter((p) => p.symbol === "ES");
   const nqPositions = positions.filter((p) => p.symbol === "NQ");
+  const barSizeSec = BAR_SIZES[barSize] || 300;
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      <SymbolChart symbol="ES" positions={esPositions} />
-      <SymbolChart symbol="NQ" positions={nqPositions} />
+    <div>
+      {/* Shared timeframe selector */}
+      <div className="flex justify-end px-2 pb-1">
+        <ChartTimeframe selected={barSize} onSelect={handleTimeframe} />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <SymbolChart
+          symbol="ES"
+          positions={esPositions}
+          barSize={barSize}
+          barSizeSec={barSizeSec}
+          syncRange={syncRange}
+          onRangeChange={makeRangeHandler("NQ")}
+        />
+        <SymbolChart
+          symbol="NQ"
+          positions={nqPositions}
+          barSize={barSize}
+          barSizeSec={barSizeSec}
+          syncRange={syncRange}
+          onRangeChange={makeRangeHandler("ES")}
+        />
+      </div>
     </div>
   );
 }

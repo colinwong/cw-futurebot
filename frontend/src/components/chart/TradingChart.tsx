@@ -57,6 +57,10 @@ interface TradingChartProps {
   viewKey?: string;
   /** Bar size in seconds — affects x-axis label formatting */
   barSizeSec?: number;
+  /** Synced visible range from the other chart */
+  syncRange?: { from: number; to: number } | null;
+  /** Callback when this chart's visible range changes (for syncing) */
+  onRangeChange?: (range: { from: number; to: number }) => void;
 }
 
 // Module-level zoom state per viewKey (bars visible from the right)
@@ -69,6 +73,8 @@ export default function TradingChart({
   horizontalLines = [],
   viewKey,
   barSizeSec = 300,
+  syncRange,
+  onRangeChange,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -163,6 +169,15 @@ export default function TradingChart({
 
     // Create markers plugin
     markersRef.current = createSeriesMarkers(candleSeries, []);
+
+    // Sync: notify parent when visible range changes (scroll/zoom)
+    if (onRangeChange) {
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (range) {
+          onRangeChange({ from: range.from, to: range.to });
+        }
+      });
+    }
 
     // Handle resize
     const resizeObserver = new ResizeObserver((entries) => {
@@ -315,6 +330,14 @@ export default function TradingChart({
       priceLinesRef.current.push(pl);
     }
   }, [horizontalLines]);
+
+  // Apply synced visible range from the other chart
+  useEffect(() => {
+    if (!chartRef.current || !syncRange) return;
+    try {
+      chartRef.current.timeScale().setVisibleLogicalRange(syncRange);
+    } catch { /* ignore — chart may not be ready */ }
+  }, [syncRange]);
 
   return <div ref={containerRef} className="w-full" />;
 }
