@@ -61,6 +61,12 @@ SETTING_DEFAULTS = {
         "label": "News Analysis Model",
         "tooltip": "Claude model used to analyze incoming news for market relevance, sentiment, and impact. claude-sonnet-4-6 is fast and cost-effective. claude-opus-4-6 is more accurate for nuanced analysis but slower and more expensive per call.",
     },
+    "trading_mode": {
+        "default": app_config.trading_mode,
+        "type": "str",
+        "label": "Trading Mode",
+        "tooltip": "Controls whether the algo engine executes trades or just generates signals. 'signal_only' shows signals in the feed without placing orders — use this for observation and testing. 'live' will automatically place bracket orders at IB when signals fire. Always start with signal_only and switch to live only after you trust the strategy.",
+    },
 }
 
 

@@ -18,13 +18,18 @@ from src.contracts import make_ib_contract
 from src.db.models import SymbolEnum
 from src.db.database import async_session
 from src.db.models import (
+    AppSetting,
+    Decision,
+    DecisionActionEnum,
     Fill,
     ImpactRatingEnum,
+    MarketSnapshot,
     NewsEvent,
     Order as OrderModel,
     OrderStatusEnum,
     Position,
     SentimentEnum,
+    Signal,
     SystemEvent,
     SystemEventTypeEnum,
 )
@@ -105,6 +110,9 @@ async def _post_connect_setup():
 
     # Register fill tracking callback on this IB instance
     _setup_fill_tracking(asyncio.get_event_loop())
+
+    # Start the algo strategy evaluation loop
+    asyncio.create_task(_strategy_evaluation_loop())
 
     # Reconciliation
     await _startup_reconciliation()
@@ -320,6 +328,158 @@ async def _startup_reconciliation():
             await session.commit()
         else:
             logger.info("Reconciliation OK — DB and IB in sync")
+
+
+async def _strategy_evaluation_loop():
+    """Evaluate all strategies on a timer and generate signals."""
+    from src.indicators import compute_indicators
+    from src.strategy.vwap_trend import VWAPTrendContinuation
+    from src.strategy.bollinger_reversion import BollingerMeanReversion
+    from src.strategy.orb_momentum import ORBMomentum
+    from src.engine.decision import DecisionEngine
+    from src.engine.risk import RiskManager
+    from src.contracts import make_ib_contract
+
+    strategies = [VWAPTrendContinuation(), BollingerMeanReversion(), ORBMomentum()]
+    risk_manager = RiskManager()
+    decision_engine = DecisionEngine(_broker_ref, risk_manager) if _broker_ref else None
+
+    await asyncio.sleep(5)  # Wait for market data to initialize
+    logger.info("Strategy evaluation loop started with %d strategies", len(strategies))
+
+    while True:
+        await asyncio.sleep(settings.strategy_eval_interval)
+        if not ib or not ib.isConnected():
+            continue
+
+        for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
+            try:
+                # Fetch recent 5-min bars for indicators
+                contract = make_ib_contract(symbol)
+                bars = await run_ib(
+                    ib.reqHistoricalData,
+                    contract,
+                    endDateTime="",
+                    durationStr="2 D",
+                    barSizeSetting="5 mins",
+                    whatToShow="TRADES",
+                    useRTH=False,
+                    formatDate=2,
+                )
+
+                if not bars or len(bars) < 50:
+                    continue
+
+                # Convert to dicts for indicator computation
+                bar_dicts = [
+                    {"open": b.open, "high": b.high, "low": b.low, "close": b.close, "volume": int(b.volume)}
+                    for b in bars
+                ]
+
+                indicators = compute_indicators(bar_dicts)
+                if not indicators:
+                    continue
+
+                last_bar = bars[-1]
+                price = last_bar.close
+
+                # Create market snapshot
+                async with async_session() as session:
+                    snapshot = MarketSnapshot(
+                        symbol=symbol,
+                        price=price,
+                        bid=price,
+                        ask=price,
+                        volume=int(last_bar.volume),
+                        indicators=indicators,
+                        market_context={},
+                    )
+                    session.add(snapshot)
+                    await session.flush()
+
+                    # Evaluate each strategy
+                    for strategy in strategies:
+                        try:
+                            signal = await strategy.evaluate(
+                                symbol=symbol,
+                                price=price,
+                                bid=price,
+                                ask=price,
+                                volume=int(last_bar.volume),
+                                indicators=indicators,
+                                market_context={},
+                                recent_news=[],
+                            )
+
+                            if signal:
+                                logger.info(
+                                    "Signal: %s %s %s — %s",
+                                    signal.strategy_name,
+                                    signal.direction.value,
+                                    symbol.value,
+                                    signal.reasoning.get("description", "")[:80],
+                                )
+
+                                # Check trading mode
+                                trading_mode = settings.trading_mode
+                                # Check DB for override
+                                from src.db.models import AppSetting
+                                mode_result = await session.execute(
+                                    _select(AppSetting).where(AppSetting.key == "trading_mode")
+                                )
+                                mode_setting = mode_result.scalars().first()
+                                if mode_setting:
+                                    trading_mode = mode_setting.value
+
+                                if trading_mode == "live" and decision_engine:
+                                    # Execute the trade
+                                    await decision_engine.process_signal(signal, snapshot, session)
+                                else:
+                                    # Signal-only mode — persist signal but don't execute
+                                    from src.db.models import Signal, Decision, DecisionActionEnum
+                                    sig_record = Signal(
+                                        snapshot_id=snapshot.id,
+                                        strategy_name=signal.strategy_name,
+                                        symbol=signal.symbol,
+                                        direction=signal.direction,
+                                        strength=signal.strength,
+                                        reasoning=signal.reasoning,
+                                    )
+                                    session.add(sig_record)
+                                    await session.flush()
+
+                                    decision = Decision(
+                                        signal_id=sig_record.id,
+                                        action=DecisionActionEnum.DEFER,
+                                        risk_evaluation={},
+                                        decision_reasoning=f"Signal-only mode — not executing. {signal.reasoning.get('description', '')}",
+                                        stop_price=None,
+                                        target_price=None,
+                                    )
+                                    session.add(decision)
+
+                                # Broadcast signal to UI
+                                await manager.broadcast("signal", {
+                                    "id": 0,
+                                    "timestamp": _datetime.now(_tz.utc).isoformat(),
+                                    "strategy_name": signal.strategy_name,
+                                    "symbol": symbol.value,
+                                    "direction": signal.direction.value,
+                                    "strength": signal.strength,
+                                    "reasoning": signal.reasoning,
+                                    "decision": {
+                                        "action": "EXECUTE" if trading_mode == "live" else "DEFER",
+                                        "reasoning": f"{'Executed' if trading_mode == 'live' else 'Signal-only mode'}",
+                                    },
+                                }, buffer=True)
+
+                        except Exception:
+                            logger.exception("Error evaluating strategy %s for %s", strategy.name, symbol.value)
+
+                    await session.commit()
+
+            except Exception:
+                logger.exception("Error in strategy evaluation for %s", symbol.value)
 
 
 async def _periodic_reconciliation_loop():

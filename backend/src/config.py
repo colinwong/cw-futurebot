@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Display
     display_timezone: str = "America/New_York"
 
+    # Trading mode: "signal_only" generates signals without executing, "live" executes trades
+    trading_mode: str = "signal_only"
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8002
