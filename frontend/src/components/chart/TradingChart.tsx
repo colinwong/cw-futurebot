@@ -173,15 +173,15 @@ export default function TradingChart({
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
     // Sync: notify parent when visible range changes (scroll/zoom)
-    // Use a flag to prevent notifying when we're applying an incoming sync
+    // Flags to prevent saving during programmatic range changes
     let applyingSync = false;
+    let suppressSave = true; // suppress during initial data load
+    setTimeout(() => { suppressSave = false; }, 500);
+
     applySyncRef.current = (range: { from: number; to: number }) => {
       applyingSync = true;
       chart.timeScale().setVisibleLogicalRange(range);
-      // Save the bar count for this view
-      if (viewKey) {
-        savedVisibleBars[viewKey] = Math.round(range.to - range.from);
-      }
+      if (viewKey) savedVisibleBars[viewKey] = Math.round(range.to - range.from);
       setTimeout(() => { applyingSync = false; }, 100);
     };
 
@@ -189,8 +189,8 @@ export default function TradingChart({
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (range && !applyingSync) {
           onRangeChange({ from: range.from, to: range.to });
-          // Continuously save zoom level
-          if (viewKey) {
+          // Save zoom — but not during initial load or programmatic changes
+          if (viewKey && !suppressSave) {
             savedVisibleBars[viewKey] = Math.round(range.to - range.from);
           }
         }
