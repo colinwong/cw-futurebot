@@ -55,6 +55,8 @@ interface TradingChartProps {
   }>;
   /** Unique key for this chart + timeframe combo, used to persist zoom level */
   viewKey?: string;
+  /** Bar size in seconds — affects x-axis label formatting */
+  barSizeSec?: number;
 }
 
 // Module-level zoom state per viewKey (bars visible from the right)
@@ -66,6 +68,7 @@ export default function TradingChart({
   markers = [],
   horizontalLines = [],
   viewKey,
+  barSizeSec = 300,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -103,6 +106,17 @@ export default function TradingChart({
           const d = new Date(time * 1000);
           const h = d.getUTCHours();
           const m = d.getUTCMinutes();
+
+          // Daily: always show date
+          if (barSizeSec >= 86400) {
+            return formatDate(time);
+          }
+          // 4h: show "Apr 2" at midnight, "Apr 2 12:00" otherwise
+          if (barSizeSec >= 14400) {
+            if (h === 0 && m === 0) return formatDate(time);
+            return `${formatDate(time)} ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+          }
+          // Intraday: show date at midnight, time otherwise
           if (h === 0 && m === 0) {
             return formatDate(time);
           }
@@ -169,7 +183,7 @@ export default function TradingChart({
       initialLoadDone.current = false;
       prevLengthRef.current = 0;
     };
-  }, [height]);
+  }, [height, barSizeSec]);
 
   // Set candle + volume + RTH data
   const prevLengthRef = useRef(0);

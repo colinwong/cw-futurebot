@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import TradingChart from "@/components/chart/TradingChart";
 import ChartTimeframe from "@/components/chart/ChartTimeframe";
-import { useMarketData } from "@/hooks/useMarketData";
+import { useMarketData, BAR_SIZES } from "@/hooks/useMarketData";
 import { getPositions } from "@/lib/api";
 import { getTimezoneOffsetSec } from "@/lib/timezone";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -118,6 +118,7 @@ function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: Positio
           markers={markers}
           horizontalLines={horizontalLines}
           viewKey={`${symbol}|${barSize}`}
+          barSizeSec={BAR_SIZES[barSize] || 300}
         />
       )}
     </div>

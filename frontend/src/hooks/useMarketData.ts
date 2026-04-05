@@ -7,7 +7,7 @@ import type { Candle, Symbol, TickData } from "@/lib/types";
 import { useWebSocket } from "./useWebSocket";
 
 // Bar size in seconds for aggregation
-const BAR_SIZES: Record<string, number> = {
+export const BAR_SIZES: Record<string, number> = {
   "1 min": 60,
   "5 mins": 300,
   "15 mins": 900,
