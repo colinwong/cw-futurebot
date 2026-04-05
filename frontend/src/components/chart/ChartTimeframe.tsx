@@ -6,7 +6,7 @@ const TIMEFRAMES = [
   { label: "15m", barSize: "15 mins", duration: "5 D" },
   { label: "1h", barSize: "1 hour", duration: "1 W" },
   { label: "4h", barSize: "4 hours", duration: "1 M" },
-  { label: "1D", barSize: "1 day", duration: "6 M" },
+  { label: "1D", barSize: "1 day", duration: "1 Y" },
 ];
 
 interface ChartTimeframeProps {
