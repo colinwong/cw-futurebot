@@ -85,6 +85,8 @@ export default function TradingChart({
   const markersRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const priceLinesRef = useRef<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applySyncRef = useRef<((range: { from: number; to: number }) => void) | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -171,10 +173,26 @@ export default function TradingChart({
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
     // Sync: notify parent when visible range changes (scroll/zoom)
+    // Use a flag to prevent notifying when we're applying an incoming sync
+    let applyingSync = false;
+    applySyncRef.current = (range: { from: number; to: number }) => {
+      applyingSync = true;
+      chart.timeScale().setVisibleLogicalRange(range);
+      // Save the bar count for this view
+      if (viewKey) {
+        savedVisibleBars[viewKey] = Math.round(range.to - range.from);
+      }
+      setTimeout(() => { applyingSync = false; }, 100);
+    };
+
     if (onRangeChange) {
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) {
+        if (range && !applyingSync) {
           onRangeChange({ from: range.from, to: range.to });
+          // Continuously save zoom level
+          if (viewKey) {
+            savedVisibleBars[viewKey] = Math.round(range.to - range.from);
+          }
         }
       });
     }
@@ -238,16 +256,6 @@ export default function TradingChart({
     }));
 
     if (!initialLoadDone.current || candles.length < prevLengthRef.current) {
-      // Save current zoom before switching
-      if (viewKey && initialLoadDone.current) {
-        try {
-          const range = chartRef.current.timeScale().getVisibleLogicalRange();
-          if (range) {
-            savedVisibleBars[prevViewKey.current] = Math.round(range.to - range.from);
-          }
-        } catch { /* ignore */ }
-      }
-
       if (rthBgSeriesRef.current) rthBgSeriesRef.current.setData(rthBgData);
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
@@ -333,10 +341,10 @@ export default function TradingChart({
 
   // Apply synced visible range from the other chart
   useEffect(() => {
-    if (!chartRef.current || !syncRange) return;
+    if (!syncRange || !applySyncRef.current) return;
     try {
-      chartRef.current.timeScale().setVisibleLogicalRange(syncRange);
-    } catch { /* ignore — chart may not be ready */ }
+      applySyncRef.current(syncRange);
+    } catch { /* ignore */ }
   }, [syncRange]);
 
   return <div ref={containerRef} className="w-full" />;
