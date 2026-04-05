@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import TradingChart from "@/components/chart/TradingChart";
+import TradingChart, { type TradingChartHandle } from "@/components/chart/TradingChart";
 import ChartTimeframe from "@/components/chart/ChartTimeframe";
 import { useMarketData, BAR_SIZES } from "@/hooks/useMarketData";
 import { getPositions } from "@/lib/api";
@@ -29,6 +29,7 @@ function SymbolChart({
   barSizeSec,
   syncRange,
   onRangeChange,
+  chartRef,
 }: {
   symbol: Symbol;
   positions: PositionOverlay[];
@@ -36,6 +37,7 @@ function SymbolChart({
   barSizeSec: number;
   syncRange: { from: number; to: number } | null;
   onRangeChange: (range: { from: number; to: number }) => void;
+  chartRef?: React.Ref<TradingChartHandle>;
 }) {
   const duration = barSize === "1 day" ? "1 Y" : barSize === "4 hours" ? "1 M" : barSize === "1 hour" ? "1 W" : barSize === "15 mins" ? "5 D" : barSize === "5 mins" ? "2 D" : "1 D";
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
@@ -91,6 +93,7 @@ function SymbolChart({
         </div>
       ) : (
         <TradingChart
+          ref={chartRef}
           candles={candles}
           height={400}
           markers={markers}
@@ -109,15 +112,20 @@ export default function DualChartLayout() {
   const [positions, setPositions] = useState<PositionOverlay[]>([]);
   const [barSize, setBarSize] = useState(savedBarSize);
   const { subscribe } = useWebSocket();
+  const esChartRef = useRef<TradingChartHandle>(null);
+  const nqChartRef = useRef<TradingChartHandle>(null);
 
   // Synced visible range between charts
   const [syncRange, setSyncRange] = useState<{ from: number; to: number } | null>(null);
   const syncSource = useRef<string | null>(null);
 
   const handleTimeframe = useCallback((newBarSize: string, _newDuration: string) => {
+    // Save zoom on BOTH charts before switching
+    esChartRef.current?.saveZoom();
+    nqChartRef.current?.saveZoom();
     setBarSize(newBarSize);
     savedBarSize = newBarSize;
-    setSyncRange(null); // Reset sync on timeframe change
+    setSyncRange(null);
   }, []);
 
   const makeRangeHandler = useCallback((source: string) => (range: { from: number; to: number }) => {
@@ -162,6 +170,7 @@ export default function DualChartLayout() {
           barSizeSec={barSizeSec}
           syncRange={syncRange}
           onRangeChange={makeRangeHandler("NQ")}
+          chartRef={esChartRef}
         />
         <SymbolChart
           symbol="NQ"
@@ -170,6 +179,7 @@ export default function DualChartLayout() {
           barSizeSec={barSizeSec}
           syncRange={syncRange}
           onRangeChange={makeRangeHandler("ES")}
+          chartRef={nqChartRef}
         />
       </div>
     </div>

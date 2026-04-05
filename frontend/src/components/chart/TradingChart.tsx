@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -18,7 +18,6 @@ import type { Candle } from "@/lib/types";
 import { formatDate, getTimezoneOffsetSec } from "@/lib/timezone";
 
 // RTH is always 9:30 AM - 4:00 PM Eastern Time
-// Pre-compute ET offset in seconds from UTC
 function getETOffsetSec(): number {
   const now = new Date();
   const utcStr = now.toLocaleString("en-US", { timeZone: "UTC" });
@@ -28,13 +27,12 @@ function getETOffsetSec(): number {
 const ET_OFFSET_SEC = getETOffsetSec();
 
 function isRTH(localEpoch: number): boolean {
-  // localEpoch is shifted by display TZ. Undo that, apply ET offset instead.
   const displayOffset = getTimezoneOffsetSec();
   const utcEpoch = localEpoch - displayOffset;
   const etEpoch = utcEpoch + ET_OFFSET_SEC;
   const d = new Date(etEpoch * 1000);
   const totalMin = d.getUTCHours() * 60 + d.getUTCMinutes();
-  return totalMin >= 570 && totalMin < 960; // 9:30=570, 16:00=960
+  return totalMin >= 570 && totalMin < 960;
 }
 
 interface TradingChartProps {
@@ -53,20 +51,20 @@ interface TradingChartProps {
     lineStyle: number;
     title: string;
   }>;
-  /** Unique key for this chart + timeframe combo, used to persist zoom level */
   viewKey?: string;
-  /** Bar size in seconds — affects x-axis label formatting */
   barSizeSec?: number;
-  /** Synced visible range from the other chart */
   syncRange?: { from: number; to: number } | null;
-  /** Callback when this chart's visible range changes (for syncing) */
   onRangeChange?: (range: { from: number; to: number }) => void;
 }
 
-// Module-level zoom state per viewKey (bars visible from the right)
+export interface TradingChartHandle {
+  saveZoom: () => void;
+}
+
+// Module-level zoom state per viewKey
 const savedVisibleBars: Record<string, number> = {};
 
-export default function TradingChart({
+const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function TradingChart({
   candles,
   height = 400,
   markers = [],
@@ -75,7 +73,7 @@ export default function TradingChart({
   barSizeSec = 300,
   syncRange,
   onRangeChange,
-}: TradingChartProps) {
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -85,8 +83,19 @@ export default function TradingChart({
   const markersRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const priceLinesRef = useRef<any[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const applySyncRef = useRef<((range: { from: number; to: number }) => void) | null>(null);
+
+  // Expose saveZoom to parent
+  useImperativeHandle(ref, () => ({
+    saveZoom: () => {
+      if (!chartRef.current || !viewKey) return;
+      try {
+        const range = chartRef.current.timeScale().getVisibleLogicalRange();
+        if (range) {
+          savedVisibleBars[viewKey] = Math.round(range.to - range.from);
+        }
+      } catch { /* ignore */ }
+    },
+  }), [viewKey]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -100,12 +109,8 @@ export default function TradingChart({
         vertLines: { color: "#1e222d" },
         horzLines: { color: "#1e222d" },
       },
-      crosshair: {
-        mode: 0,
-      },
-      rightPriceScale: {
-        borderColor: "#2a2e39",
-      },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: "#2a2e39" },
       timeScale: {
         borderColor: "#2a2e39",
         timeVisible: true,
@@ -114,28 +119,18 @@ export default function TradingChart({
           const d = new Date(time * 1000);
           const h = d.getUTCHours();
           const m = d.getUTCMinutes();
-
-          // Daily: always show date
-          if (barSizeSec >= 86400) {
-            return formatDate(time);
-          }
-          // 4h: show "Apr 2" at midnight, "Apr 2 12:00" otherwise
+          if (barSizeSec >= 86400) return formatDate(time);
           if (barSizeSec >= 14400) {
             if (h === 0 && m === 0) return formatDate(time);
             return `${formatDate(time)} ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
           }
-          // Intraday: show date at midnight, time otherwise
-          if (h === 0 && m === 0) {
-            return formatDate(time);
-          }
+          if (h === 0 && m === 0) return formatDate(time);
           return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
         },
       },
       height,
     });
 
-    // RTH background shading — histogram that fills full height for non-RTH bars
-    // Added BEFORE candlestick series so it renders behind
     const rthBgSeries = chart.addSeries(HistogramSeries, {
       priceScaleId: "rthBg",
       lastValueVisible: false,
@@ -146,7 +141,6 @@ export default function TradingChart({
       visible: false,
     });
 
-    // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#26a69a",
       downColor: "#ef5350",
@@ -155,7 +149,6 @@ export default function TradingChart({
       wickDownColor: "#ef5350",
     });
 
-    // Volume histogram series (overlaid at bottom)
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
@@ -168,36 +161,35 @@ export default function TradingChart({
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
     rthBgSeriesRef.current = rthBgSeries;
-
-    // Create markers plugin
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
-    // Sync: notify parent when visible range changes (scroll/zoom)
-    // Flags to prevent saving during programmatic range changes
-    let applyingSync = false;
-    let suppressSave = true; // suppress during initial data load
-    setTimeout(() => { suppressSave = false; }, 500);
-
-    applySyncRef.current = (range: { from: number; to: number }) => {
-      applyingSync = true;
-      chart.timeScale().setVisibleLogicalRange(range);
-      if (viewKey) savedVisibleBars[viewKey] = Math.round(range.to - range.from);
-      setTimeout(() => { applyingSync = false; }, 100);
-    };
+    // Sync: notify parent when user scrolls/zooms (not during programmatic changes)
+    let programmatic = false;
 
     if (onRangeChange) {
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range && !applyingSync) {
+        if (range && !programmatic) {
           onRangeChange({ from: range.from, to: range.to });
-          // Save zoom — but not during initial load or programmatic changes
-          if (viewKey && !suppressSave) {
-            savedVisibleBars[viewKey] = Math.round(range.to - range.from);
-          }
+          if (viewKey) savedVisibleBars[viewKey] = Math.round(range.to - range.from);
         }
       });
     }
 
-    // Handle resize
+    // Helper to set range without triggering sync
+    const setRangeSilently = (range: { from: number; to: number }) => {
+      programmatic = true;
+      chart.timeScale().setVisibleLogicalRange(range);
+      setTimeout(() => { programmatic = false; }, 50);
+    };
+
+    // Store for sync effect
+    setRangeSilentlyRef.current = setRangeSilently;
+    fitContentSilentlyRef.current = () => {
+      programmatic = true;
+      chart.timeScale().fitContent();
+      setTimeout(() => { programmatic = false; }, 50);
+    };
+
     const resizeObserver = new ResizeObserver((entries) => {
       const { width } = entries[0].contentRect;
       chart.applyOptions({ width });
@@ -215,18 +207,21 @@ export default function TradingChart({
       priceLinesRef.current = [];
       initialLoadDone.current = false;
       prevLengthRef.current = 0;
+      setRangeSilentlyRef.current = null;
+      fitContentSilentlyRef.current = null;
     };
   }, [height, barSizeSec]);
 
-  // Set candle + volume + RTH data
   const prevLengthRef = useRef(0);
   const initialLoadDone = useRef(false);
   const prevFirstTime = useRef<number>(0);
-  const prevViewKey = useRef(viewKey || "");
+  const setRangeSilentlyRef = useRef<((r: { from: number; to: number }) => void) | null>(null);
+  const fitContentSilentlyRef = useRef<(() => void) | null>(null);
+
+  // Set candle + volume + RTH data
   useEffect(() => {
     if (!candleSeriesRef.current || !chartRef.current || !volumeSeriesRef.current || candles.length === 0) return;
 
-    // Detect timeframe change — if first candle time changed, force full reload
     const firstTime = candles[0].time;
     if (firstTime !== prevFirstTime.current) {
       initialLoadDone.current = false;
@@ -235,20 +230,13 @@ export default function TradingChart({
     }
 
     const candleData: CandlestickData<Time>[] = candles.map((c) => ({
-      time: c.time as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
+      time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
     }));
-
-    // RTH background — light gray bars for non-RTH periods
     const rthBgData: HistogramData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
       value: isRTH(c.time) ? 0 : 1,
       color: isRTH(c.time) ? "transparent" : "rgba(255, 255, 255, 0.03)",
     }));
-
     const volumeData: HistogramData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
       value: c.volume,
@@ -260,27 +248,18 @@ export default function TradingChart({
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
-      // Restore saved zoom or fit content
-      const savedBars = viewKey ? savedVisibleBars[viewKey] : undefined;
-      if (savedBars && savedBars > 0) {
-        const totalBars = candles.length;
-        chartRef.current.timeScale().setVisibleLogicalRange({
-          from: totalBars - savedBars,
-          to: totalBars,
-        });
-      } else {
-        chartRef.current.timeScale().fitContent();
+      // Restore saved zoom silently (won't trigger onRangeChange)
+      const saved = viewKey ? savedVisibleBars[viewKey] : undefined;
+      if (saved && saved > 0 && setRangeSilentlyRef.current) {
+        setRangeSilentlyRef.current({ from: candles.length - saved, to: candles.length });
+      } else if (fitContentSilentlyRef.current) {
+        fitContentSilentlyRef.current();
       }
       initialLoadDone.current = true;
-      prevViewKey.current = viewKey || "";
     } else {
       const last = candles[candles.length - 1];
       candleSeriesRef.current.update({
-        time: last.time as Time,
-        open: last.open,
-        high: last.high,
-        low: last.low,
-        close: last.close,
+        time: last.time as Time, open: last.open, high: last.high, low: last.low, close: last.close,
       });
       if (rthBgSeriesRef.current) {
         rthBgSeriesRef.current.update({
@@ -302,38 +281,23 @@ export default function TradingChart({
   // Update markers
   useEffect(() => {
     if (!markersRef.current) return;
-
     const sorted = [...markers].sort((a, b) => a.time - b.time);
     markersRef.current.setMarkers(
-      sorted.map((m) => ({
-        time: m.time as Time,
-        position: m.position,
-        color: m.color,
-        shape: m.shape,
-        text: m.text,
-      })) as SeriesMarker<Time>[]
+      sorted.map((m) => ({ time: m.time as Time, position: m.position, color: m.color, shape: m.shape, text: m.text })) as SeriesMarker<Time>[]
     );
   }, [markers]);
 
-  // Update horizontal lines (stop/target) — clear old ones first
+  // Update horizontal lines
   useEffect(() => {
     if (!candleSeriesRef.current) return;
-
-    // Remove old price lines
     for (const line of priceLinesRef.current) {
       try { candleSeriesRef.current.removePriceLine(line); } catch { /* ignore */ }
     }
     priceLinesRef.current = [];
-
-    // Add new ones
     for (const line of horizontalLines) {
       const pl = candleSeriesRef.current.createPriceLine({
-        price: line.price,
-        color: line.color,
-        lineWidth: 1,
-        lineStyle: line.lineStyle,
-        axisLabelVisible: true,
-        title: line.title,
+        price: line.price, color: line.color, lineWidth: 1,
+        lineStyle: line.lineStyle, axisLabelVisible: true, title: line.title,
       });
       priceLinesRef.current.push(pl);
     }
@@ -341,11 +305,11 @@ export default function TradingChart({
 
   // Apply synced visible range from the other chart
   useEffect(() => {
-    if (!syncRange || !applySyncRef.current) return;
-    try {
-      applySyncRef.current(syncRange);
-    } catch { /* ignore */ }
+    if (!syncRange || !setRangeSilentlyRef.current) return;
+    setRangeSilentlyRef.current(syncRange);
   }, [syncRange]);
 
   return <div ref={containerRef} className="w-full" />;
-}
+});
+
+export default TradingChart;
