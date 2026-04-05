@@ -1,6 +1,7 @@
 "use client";
 
 import AccountBar from "@/components/layout/AccountBar";
+import EngineStatus from "@/components/layout/EngineStatus";
 import DualChartLayout from "@/components/layout/DualChartLayout";
 import PositionsAndOrders from "@/components/trading/PositionsAndOrders";
 import OrderEntry from "@/components/trading/OrderEntry";
@@ -12,6 +13,7 @@ export default function TradingTerminal() {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <AccountBar />
+      <EngineStatus />
 
       {/* Charts */}
       <div className="p-2 shrink-0">

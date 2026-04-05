@@ -6,6 +6,7 @@ import {
   createSeriesMarkers,
   CandlestickSeries,
   HistogramSeries,
+  LineSeries,
   type IChartApi,
   type ISeriesApi,
   ColorType,
@@ -37,6 +38,35 @@ function isRTHCached(localEpoch: number, displayOffset: number): boolean {
   return totalMin >= 570 && totalMin < 960;
 }
 
+// Simple EMA calculation from candle closes
+function computeEMA(candles: Candle[], period: number): { time: number; value: number }[] {
+  if (candles.length < period) return [];
+  const k = 2 / (period + 1);
+  const result: { time: number; value: number }[] = [];
+  let ema = candles.slice(0, period).reduce((s, c) => s + c.close, 0) / period;
+  for (let i = period - 1; i < candles.length; i++) {
+    ema = candles[i].close * k + ema * (1 - k);
+    result.push({ time: candles[i].time, value: ema });
+  }
+  return result;
+}
+
+// Simple VWAP from candle data
+function computeVWAP(candles: Candle[]): { time: number; value: number }[] {
+  let cumVol = 0;
+  let cumTPVol = 0;
+  const result: { time: number; value: number }[] = [];
+  for (const c of candles) {
+    const tp = (c.high + c.low + c.close) / 3;
+    cumVol += c.volume;
+    cumTPVol += tp * c.volume;
+    if (cumVol > 0) {
+      result.push({ time: c.time, value: cumTPVol / cumVol });
+    }
+  }
+  return result;
+}
+
 interface TradingChartProps {
   candles: Candle[];
   height?: number;
@@ -57,6 +87,7 @@ interface TradingChartProps {
   barSizeSec?: number;
   syncRange?: { from: number; to: number } | null;
   onRangeChange?: (range: { from: number; to: number }) => void;
+  showIndicators?: boolean;
 }
 
 export interface TradingChartHandle {
@@ -75,12 +106,17 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   barSizeSec = 300,
   syncRange,
   onRangeChange,
+  showIndicators = true,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const rthBgSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const ema9Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema21Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,10 +195,34 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       scaleMargins: { top: 0.85, bottom: 0 },
     });
 
+    // Indicator overlay lines
+    let ema9Series: ISeriesApi<"Line"> | null = null;
+    let ema21Series: ISeriesApi<"Line"> | null = null;
+    let ema50Series: ISeriesApi<"Line"> | null = null;
+    let vwapSeries: ISeriesApi<"Line"> | null = null;
+    if (showIndicators) {
+      ema9Series = chart.addSeries(LineSeries, {
+        color: "#f59e0b", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
+      });
+      ema21Series = chart.addSeries(LineSeries, {
+        color: "#3b82f6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
+      });
+      ema50Series = chart.addSeries(LineSeries, {
+        color: "#8b5cf6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
+      });
+      vwapSeries = chart.addSeries(LineSeries, {
+        color: "#ec4899", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
+      });
+    }
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
     rthBgSeriesRef.current = rthBgSeries;
+    ema9Ref.current = ema9Series;
+    ema21Ref.current = ema21Series;
+    ema50Ref.current = ema50Series;
+    vwapRef.current = vwapSeries;
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
     // Sync: notify parent when user scrolls/zooms (not during programmatic changes)
@@ -205,6 +265,10 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       rthBgSeriesRef.current = null;
+      ema9Ref.current = null;
+      ema21Ref.current = null;
+      ema50Ref.current = null;
+      vwapRef.current = null;
       markersRef.current = null;
       priceLinesRef.current = [];
       initialLoadDone.current = false;
@@ -249,6 +313,16 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       if (rthBgSeriesRef.current) rthBgSeriesRef.current.setData(rthBgData);
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
+
+      // Compute and set indicator overlays
+      if (showIndicators) {
+        const toLineData = (pts: { time: number; value: number }[]) =>
+          pts.map((p) => ({ time: p.time as Time, value: p.value }));
+        if (ema9Ref.current) ema9Ref.current.setData(toLineData(computeEMA(candles, 9)));
+        if (ema21Ref.current) ema21Ref.current.setData(toLineData(computeEMA(candles, 21)));
+        if (ema50Ref.current) ema50Ref.current.setData(toLineData(computeEMA(candles, 50)));
+        if (vwapRef.current) vwapRef.current.setData(toLineData(computeVWAP(candles)));
+      }
 
       const saved = viewKey ? savedVisibleBars[viewKey] : undefined;
       if (saved && saved > 0 && setRangeSilentlyRef.current) {
