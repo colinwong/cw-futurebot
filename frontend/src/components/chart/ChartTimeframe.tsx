@@ -1,6 +1,6 @@
 "use client";
 
-const TIMEFRAMES = [
+export const TIMEFRAMES = [
   { label: "1m", barSize: "1 min", duration: "1 D" },
   { label: "5m", barSize: "5 mins", duration: "2 D" },
   { label: "15m", barSize: "15 mins", duration: "5 D" },
@@ -8,6 +8,10 @@ const TIMEFRAMES = [
   { label: "4h", barSize: "4 hours", duration: "1 M" },
   { label: "1D", barSize: "1 day", duration: "1 Y" },
 ];
+
+export const DURATION_FOR_BAR_SIZE: Record<string, string> = Object.fromEntries(
+  TIMEFRAMES.map((tf) => [tf.barSize, tf.duration])
+);
 
 interface ChartTimeframeProps {
   selected: string;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import TradingChart, { type TradingChartHandle } from "@/components/chart/TradingChart";
-import ChartTimeframe from "@/components/chart/ChartTimeframe";
+import ChartTimeframe, { DURATION_FOR_BAR_SIZE } from "@/components/chart/ChartTimeframe";
 import { useMarketData, BAR_SIZES } from "@/hooks/useMarketData";
 import { getPositions } from "@/lib/api";
 import { getTimezoneOffsetSec } from "@/lib/timezone";
@@ -20,7 +20,6 @@ interface PositionOverlay {
 
 // Module-level: persist shared timeframe across page navigations
 let savedBarSize = "5 mins";
-let savedDuration = "2 D";
 
 function SymbolChart({
   symbol,
@@ -39,7 +38,7 @@ function SymbolChart({
   onRangeChange: (range: { from: number; to: number }) => void;
   chartRef?: React.Ref<TradingChartHandle>;
 }) {
-  const duration = barSize === "1 day" ? "1 Y" : barSize === "4 hours" ? "1 M" : barSize === "1 hour" ? "1 W" : barSize === "15 mins" ? "5 D" : barSize === "5 mins" ? "2 D" : "1 D";
+  const duration = DURATION_FOR_BAR_SIZE[barSize] || "1 D";
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
 
   const { markers, horizontalLines } = useMemo(() => {
@@ -152,9 +151,11 @@ export default function DualChartLayout() {
     return unsub;
   }, [subscribe]);
 
-  const esPositions = positions.filter((p) => p.symbol === "ES");
-  const nqPositions = positions.filter((p) => p.symbol === "NQ");
+  const esPositions = useMemo(() => positions.filter((p) => p.symbol === "ES"), [positions]);
+  const nqPositions = useMemo(() => positions.filter((p) => p.symbol === "NQ"), [positions]);
   const barSizeSec = BAR_SIZES[barSize] || 300;
+  const esRangeHandler = useMemo(() => makeRangeHandler("NQ"), [makeRangeHandler]);
+  const nqRangeHandler = useMemo(() => makeRangeHandler("ES"), [makeRangeHandler]);
 
   return (
     <div>
@@ -169,7 +170,7 @@ export default function DualChartLayout() {
           barSize={barSize}
           barSizeSec={barSizeSec}
           syncRange={syncRange}
-          onRangeChange={makeRangeHandler("NQ")}
+          onRangeChange={esRangeHandler}
           chartRef={esChartRef}
         />
         <SymbolChart
@@ -178,7 +179,7 @@ export default function DualChartLayout() {
           barSize={barSize}
           barSizeSec={barSizeSec}
           syncRange={syncRange}
-          onRangeChange={makeRangeHandler("ES")}
+          onRangeChange={nqRangeHandler}
           chartRef={nqChartRef}
         />
       </div>

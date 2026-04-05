@@ -27,9 +27,11 @@ function getETOffsetSec(): number {
 const ET_OFFSET_SEC = getETOffsetSec();
 
 function isRTH(localEpoch: number): boolean {
-  const displayOffset = getTimezoneOffsetSec();
-  const utcEpoch = localEpoch - displayOffset;
-  const etEpoch = utcEpoch + ET_OFFSET_SEC;
+  return isRTHCached(localEpoch, getTimezoneOffsetSec());
+}
+
+function isRTHCached(localEpoch: number, displayOffset: number): boolean {
+  const etEpoch = localEpoch - displayOffset + ET_OFFSET_SEC;
   const d = new Date(etEpoch * 1000);
   const totalMin = d.getUTCHours() * 60 + d.getUTCMinutes();
   return totalMin >= 570 && totalMin < 960;
@@ -229,26 +231,25 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       prevFirstTime.current = firstTime;
     }
 
-    const candleData: CandlestickData<Time>[] = candles.map((c) => ({
-      time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
-    }));
-    const rthBgData: HistogramData<Time>[] = candles.map((c) => ({
-      time: c.time as Time,
-      value: isRTH(c.time) ? 0 : 1,
-      color: isRTH(c.time) ? "transparent" : "rgba(255, 255, 255, 0.03)",
-    }));
-    const volumeData: HistogramData<Time>[] = candles.map((c) => ({
-      time: c.time as Time,
-      value: c.volume,
-      color: c.close >= c.open ? "rgba(38, 166, 154, 0.3)" : "rgba(239, 83, 80, 0.3)",
-    }));
-
     if (!initialLoadDone.current || candles.length < prevLengthRef.current) {
+      // Full data load — build all arrays (cache displayOffset to avoid N calls)
+      const displayOffset = getTimezoneOffsetSec();
+      const candleData: CandlestickData<Time>[] = candles.map((c) => ({
+        time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
+      }));
+      const rthBgData: HistogramData<Time>[] = candles.map((c) => {
+        const rth = isRTHCached(c.time, displayOffset);
+        return { time: c.time as Time, value: rth ? 0 : 1, color: rth ? "transparent" : "rgba(255, 255, 255, 0.03)" };
+      });
+      const volumeData: HistogramData<Time>[] = candles.map((c) => ({
+        time: c.time as Time, value: c.volume,
+        color: c.close >= c.open ? "rgba(38, 166, 154, 0.3)" : "rgba(239, 83, 80, 0.3)",
+      }));
+
       if (rthBgSeriesRef.current) rthBgSeriesRef.current.setData(rthBgData);
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
-      // Restore saved zoom silently (won't trigger onRangeChange)
       const saved = viewKey ? savedVisibleBars[viewKey] : undefined;
       if (saved && saved > 0 && setRangeSilentlyRef.current) {
         setRangeSilentlyRef.current({ from: candles.length - saved, to: candles.length });
@@ -257,20 +258,19 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       }
       initialLoadDone.current = true;
     } else {
+      // Incremental update — only update the last candle
       const last = candles[candles.length - 1];
+      const rth = isRTH(last.time);
       candleSeriesRef.current.update({
         time: last.time as Time, open: last.open, high: last.high, low: last.low, close: last.close,
       });
       if (rthBgSeriesRef.current) {
         rthBgSeriesRef.current.update({
-          time: last.time as Time,
-          value: isRTH(last.time) ? 0 : 1,
-          color: isRTH(last.time) ? "transparent" : "rgba(255, 255, 255, 0.03)",
+          time: last.time as Time, value: rth ? 0 : 1, color: rth ? "transparent" : "rgba(255, 255, 255, 0.03)",
         });
       }
       volumeSeriesRef.current.update({
-        time: last.time as Time,
-        value: last.volume,
+        time: last.time as Time, value: last.volume,
         color: last.close >= last.open ? "rgba(38, 166, 154, 0.3)" : "rgba(239, 83, 80, 0.3)",
       });
       chartRef.current.timeScale().scrollToRealTime();
