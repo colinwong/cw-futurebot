@@ -18,14 +18,19 @@ interface PositionOverlay {
   entry_timestamp: string;
 }
 
+// Module-level chart settings — persist across page navigations
+const chartSettings: Record<string, { barSize: string; duration: string }> = {};
+
 function SymbolChart({ symbol, positions }: { symbol: Symbol; positions: PositionOverlay[] }) {
-  const [barSize, setBarSize] = useState("5 mins");
-  const [duration, setDuration] = useState("2 D");
+  const saved = chartSettings[symbol] || { barSize: "5 mins", duration: "2 D" };
+  const [barSize, setBarSize] = useState(saved.barSize);
+  const [duration, setDuration] = useState(saved.duration);
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
 
   const handleTimeframe = (newBarSize: string, newDuration: string) => {
     setBarSize(newBarSize);
     setDuration(newDuration);
+    chartSettings[symbol] = { barSize: newBarSize, duration: newDuration };
   };
 
   // Generate chart overlays from positions
