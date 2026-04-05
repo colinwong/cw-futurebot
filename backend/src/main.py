@@ -70,6 +70,7 @@ async def run_ib(fn: Callable[..., T], *args, **kwargs) -> T:
 
 
 _broker_ref: IBBroker | None = None
+_engine_running = False
 
 
 async def _connect_ib() -> bool:
@@ -345,10 +346,12 @@ async def _strategy_evaluation_loop():
     decision_engine = DecisionEngine(_broker_ref, risk_manager) if _broker_ref else None
 
     await asyncio.sleep(5)  # Wait for market data to initialize
-    logger.info("Strategy evaluation loop started with %d strategies", len(strategies))
+    logger.info("Strategy evaluation loop ready with %d strategies (waiting for engine start)", len(strategies))
 
     while True:
         await asyncio.sleep(settings.strategy_eval_interval)
+        if not _engine_running:
+            continue
         if not ib or not ib.isConnected():
             continue
 
@@ -774,6 +777,32 @@ async def reconnect_ib():
         return {"status": "error", "message": str(e)}
 
 
+@app.post("/api/system/engine/start")
+async def start_engine():
+    """Start the algo trading engine."""
+    global _engine_running
+    _engine_running = True
+    logger.info("Algo engine STARTED")
+    await manager.broadcast("system", {"event": "engine_started"})
+    return {"status": "running"}
+
+
+@app.post("/api/system/engine/stop")
+async def stop_engine():
+    """Stop the algo trading engine."""
+    global _engine_running
+    _engine_running = False
+    logger.info("Algo engine STOPPED")
+    await manager.broadcast("system", {"event": "engine_stopped"})
+    return {"status": "stopped"}
+
+
+@app.get("/api/system/engine/status")
+async def engine_status():
+    """Get the algo engine status."""
+    return {"running": _engine_running}
+
+
 @app.get("/api/status")
 async def status():
     ib_connected = ib is not None and ib.isConnected()
@@ -807,4 +836,5 @@ async def status():
         "ib_connected": ib_connected,
         "ib_account": ib_account,
         "account": account_info,
+        "engine_running": _engine_running,
     }

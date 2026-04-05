@@ -124,6 +124,14 @@ export function getLogs(limit = 200) {
 }
 
 // System
+export function startEngine() {
+  return fetchApi<{ status: string }>("/api/system/engine/start", { method: "POST" });
+}
+
+export function stopEngine() {
+  return fetchApi<{ status: string }>("/api/system/engine/stop", { method: "POST" });
+}
+
 export function reconnectIB() {
   return fetchApi<{ status: string; message: string }>("/api/system/reconnect-ib", {
     method: "POST",
