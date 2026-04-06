@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { getLogs } from "@/lib/api";
 import { formatDateTime } from "@/lib/timezone";
+import { formatEventData } from "@/lib/formatEvent";
 
 interface LogEntry {
   id: string;
@@ -23,18 +24,6 @@ const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
 };
 
 type FilterType = "all" | "trade" | "order" | "fill" | "system" | "news";
-
-function formatLiveOrderMsg(d: Record<string, unknown>): string {
-  if (d.status === "FILLED") return `Order #${d.ib_order_id} filled @ ${(d.fill_price as number)?.toFixed(2)} x${d.quantity}`;
-  if (d.status) return `Order #${d.ib_order_id} ${d.status}`;
-  return JSON.stringify(d).slice(0, 80);
-}
-
-function formatLivePositionMsg(d: Record<string, unknown>): string {
-  if (d.action === "updated") return "Position updated";
-  if (d.direction) return `${d.direction} ${d.symbol} x${d.quantity} @ ${(d.entry_price as number)?.toFixed(2)}`;
-  return JSON.stringify(d).slice(0, 80);
-}
 
 function formatLiveNewsMsg(d: Record<string, unknown>): string {
   return `[${d.impact_rating}] [${d.sentiment}] ${d.headline}`;
@@ -86,12 +75,10 @@ export default function LogsPage() {
 
     const unsubs = [
       subscribe("order", (data) => {
-        const d = data as Record<string, unknown>;
-        addLive("order", formatLiveOrderMsg(d));
+        addLive("order", formatEventData(data as Record<string, unknown>));
       }),
       subscribe("position", (data) => {
-        const d = data as Record<string, unknown>;
-        addLive("trade", formatLivePositionMsg(d));
+        addLive("trade", formatEventData(data as Record<string, unknown>));
       }),
       subscribe("news", (data) => {
         const d = data as Record<string, unknown>;
@@ -100,7 +87,7 @@ export default function LogsPage() {
       subscribe("system", (data) => {
         const d = data as Record<string, unknown>;
         if (d.event === "engine_eval_start" || d.event === "engine_eval_done") return;
-        addLive("system", JSON.stringify(d).slice(0, 80));
+        addLive("system", formatEventData(d));
       }),
     ];
     return () => unsubs.forEach((u) => u());

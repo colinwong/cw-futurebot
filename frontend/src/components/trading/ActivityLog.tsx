@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { getLogs } from "@/lib/api";
 import { formatTime, formatDateTime } from "@/lib/timezone";
+import { formatEventData } from "@/lib/formatEvent";
 
 interface LogEntry {
   id: string;
@@ -21,23 +22,6 @@ const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   trade: { label: "TRADE", color: "bg-green-900 text-green-400" },
   system: { label: "SYS", color: "bg-yellow-900 text-yellow-400" },
 };
-
-function formatOrderMessage(d: Record<string, unknown>): string {
-  if (d.status === "FILLED") return `Order #${d.ib_order_id} filled @ ${(d.fill_price as number)?.toFixed(2)} x${d.quantity}`;
-  if (d.status) return `Order #${d.ib_order_id} ${d.status}`;
-  return JSON.stringify(d).slice(0, 60);
-}
-
-function formatPositionMessage(d: Record<string, unknown>): string {
-  if (d.action === "updated") return "Position updated";
-  if (d.direction) return `${d.direction} ${d.symbol} x${d.quantity} @ ${(d.entry_price as number)?.toFixed(2)}`;
-  return JSON.stringify(d).slice(0, 60);
-}
-
-function formatSystemMessage(d: Record<string, unknown>): string {
-  if (d.event_type) return `${d.event_type}: ${JSON.stringify(d.details || "").slice(0, 40)}`;
-  return JSON.stringify(d).slice(0, 60);
-}
 
 export default function ActivityLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -80,17 +64,16 @@ export default function ActivityLog() {
     const unsubs = [
       subscribe("order", (data) => {
         const d = data as Record<string, unknown>;
-        setEntries((prev) => [makeEntry("order", "ORDER", "bg-blue-900 text-blue-400", formatOrderMessage(d)), ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("order", "ORDER", "bg-blue-900 text-blue-400", formatEventData(d)), ...prev].slice(0, 100));
       }),
       subscribe("position", (data) => {
         const d = data as Record<string, unknown>;
-        setEntries((prev) => [makeEntry("trade", "TRADE", "bg-green-900 text-green-400", formatPositionMessage(d)), ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("trade", "TRADE", "bg-green-900 text-green-400", formatEventData(d)), ...prev].slice(0, 100));
       }),
       subscribe("system", (data) => {
         const d = data as Record<string, unknown>;
-        // Skip engine eval progress events — those go to EngineStatus, not the activity log
         if (d.event === "engine_eval_start" || d.event === "engine_eval_done") return;
-        setEntries((prev) => [makeEntry("system", "SYS", "bg-yellow-900 text-yellow-400", formatSystemMessage(d)), ...prev].slice(0, 100));
+        setEntries((prev) => [makeEntry("system", "SYS", "bg-yellow-900 text-yellow-400", formatEventData(d)), ...prev].slice(0, 100));
       }),
     ];
     return () => unsubs.forEach((u) => u());
