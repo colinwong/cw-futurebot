@@ -88,6 +88,7 @@ interface TradingChartProps {
   syncRange?: { from: number; to: number } | null;
   onRangeChange?: (range: { from: number; to: number }) => void;
   showIndicators?: boolean;
+  indicatorVis?: { ema9: boolean; ema21: boolean; ema50: boolean; vwap: boolean };
 }
 
 export interface TradingChartHandle {
@@ -107,6 +108,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   syncRange,
   onRangeChange,
   showIndicators = true,
+  indicatorVis = { ema9: true, ema21: true, ema50: true, vwap: true },
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -314,14 +316,15 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
-      // Compute and set indicator overlays
+      // Compute and set indicator overlays based on visibility
       if (showIndicators) {
         const toLineData = (pts: { time: number; value: number }[]) =>
           pts.map((p) => ({ time: p.time as Time, value: p.value }));
-        if (ema9Ref.current) ema9Ref.current.setData(toLineData(computeEMA(candles, 9)));
-        if (ema21Ref.current) ema21Ref.current.setData(toLineData(computeEMA(candles, 21)));
-        if (ema50Ref.current) ema50Ref.current.setData(toLineData(computeEMA(candles, 50)));
-        if (vwapRef.current) vwapRef.current.setData(toLineData(computeVWAP(candles)));
+        const empty: { time: Time; value: number }[] = [];
+        if (ema9Ref.current) ema9Ref.current.setData(indicatorVis.ema9 ? toLineData(computeEMA(candles, 9)) : empty);
+        if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 ? toLineData(computeEMA(candles, 21)) : empty);
+        if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 ? toLineData(computeEMA(candles, 50)) : empty);
+        if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap ? toLineData(computeVWAP(candles)) : empty);
       }
 
       const saved = viewKey ? savedVisibleBars[viewKey] : undefined;
@@ -351,6 +354,18 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     }
     prevLengthRef.current = candles.length;
   }, [candles]);
+
+  // Update indicator visibility when toggled
+  useEffect(() => {
+    if (!showIndicators) return;
+    const toLineData = (pts: { time: number; value: number }[]) =>
+      pts.map((p) => ({ time: p.time as Time, value: p.value }));
+    const empty: { time: Time; value: number }[] = [];
+    if (ema9Ref.current) ema9Ref.current.setData(indicatorVis.ema9 && candles.length > 9 ? toLineData(computeEMA(candles, 9)) : empty);
+    if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 && candles.length > 21 ? toLineData(computeEMA(candles, 21)) : empty);
+    if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 && candles.length > 50 ? toLineData(computeEMA(candles, 50)) : empty);
+    if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap && candles.length > 0 ? toLineData(computeVWAP(candles)) : empty);
+  }, [indicatorVis, showIndicators]);
 
   // Update markers
   useEffect(() => {

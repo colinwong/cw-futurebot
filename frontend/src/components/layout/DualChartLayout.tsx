@@ -18,8 +18,12 @@ interface PositionOverlay {
   entry_timestamp: string;
 }
 
-// Module-level: persist shared timeframe across page navigations
+// Module-level: persist shared timeframe and indicator visibility across navigations
 let savedBarSize = "5 mins";
+
+export type IndicatorVisibility = { ema9: boolean; ema21: boolean; ema50: boolean; vwap: boolean };
+const defaultVis: IndicatorVisibility = { ema9: true, ema21: true, ema50: true, vwap: true };
+const savedIndicatorVis: Record<string, IndicatorVisibility> = {};
 
 function SymbolChart({
   symbol,
@@ -29,6 +33,7 @@ function SymbolChart({
   syncRange,
   onRangeChange,
   chartRef,
+  indicatorVis,
 }: {
   symbol: Symbol;
   positions: PositionOverlay[];
@@ -37,6 +42,7 @@ function SymbolChart({
   syncRange: { from: number; to: number } | null;
   onRangeChange: (range: { from: number; to: number }) => void;
   chartRef?: React.Ref<TradingChartHandle>;
+  indicatorVis: IndicatorVisibility;
 }) {
   const duration = DURATION_FOR_BAR_SIZE[barSize] || "1 D";
   const { candles, lastTick, loading } = useMarketData(symbol, barSize, duration);
@@ -85,12 +91,6 @@ function SymbolChart({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 text-[10px]">
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#f59e0b] inline-block" />EMA9</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#3b82f6] inline-block" />EMA21</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#8b5cf6] inline-block" />EMA50</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#ec4899] inline-block border-dashed" />VWAP</span>
-        </div>
       </div>
       {loading ? (
         <div className="flex items-center justify-center h-[400px] text-gray-500">
@@ -107,6 +107,7 @@ function SymbolChart({
           barSizeSec={barSizeSec}
           syncRange={syncRange}
           onRangeChange={onRangeChange}
+          indicatorVis={indicatorVis}
         />
       )}
     </div>
@@ -116,6 +117,9 @@ function SymbolChart({
 export default function DualChartLayout() {
   const [positions, setPositions] = useState<PositionOverlay[]>([]);
   const [barSize, setBarSize] = useState(savedBarSize);
+  const [indicatorVis, setIndicatorVis] = useState<IndicatorVisibility>(
+    savedIndicatorVis[savedBarSize] || { ...defaultVis }
+  );
   const { subscribe } = useWebSocket();
   const esChartRef = useRef<TradingChartHandle>(null);
   const nqChartRef = useRef<TradingChartHandle>(null);
@@ -125,13 +129,21 @@ export default function DualChartLayout() {
   const syncSource = useRef<string | null>(null);
 
   const handleTimeframe = useCallback((newBarSize: string, _newDuration: string) => {
-    // Save zoom on BOTH charts before switching
     esChartRef.current?.saveZoom();
     nqChartRef.current?.saveZoom();
     setBarSize(newBarSize);
     savedBarSize = newBarSize;
+    setIndicatorVis(savedIndicatorVis[newBarSize] || { ...defaultVis });
     setSyncRange(null);
   }, []);
+
+  const toggleIndicator = useCallback((key: keyof IndicatorVisibility) => {
+    setIndicatorVis((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      savedIndicatorVis[barSize] = next;
+      return next;
+    });
+  }, [barSize]);
 
   const makeRangeHandler = useCallback((source: string) => (range: { from: number; to: number }) => {
     // Prevent infinite loop: only sync if this chart initiated the change
@@ -165,8 +177,27 @@ export default function DualChartLayout() {
 
   return (
     <div>
-      {/* Shared timeframe selector */}
-      <div className="flex justify-end px-2 pb-1">
+      {/* Shared timeframe selector + indicator toggles */}
+      <div className="flex items-center justify-between px-2 pb-1">
+        <div className="flex items-center gap-2 text-[10px]">
+          {([
+            { key: "ema9" as const, label: "EMA9", color: "#f59e0b" },
+            { key: "ema21" as const, label: "EMA21", color: "#3b82f6" },
+            { key: "ema50" as const, label: "EMA50", color: "#8b5cf6" },
+            { key: "vwap" as const, label: "VWAP", color: "#ec4899" },
+          ]).map((ind) => (
+            <button
+              key={ind.key}
+              onClick={() => toggleIndicator(ind.key)}
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${
+                indicatorVis[ind.key] ? "bg-gray-800" : "bg-gray-900 opacity-40"
+              }`}
+            >
+              <span className="w-3 h-0.5 inline-block" style={{ backgroundColor: ind.color }} />
+              {ind.label}
+            </button>
+          ))}
+        </div>
         <ChartTimeframe selected={barSize} onSelect={handleTimeframe} />
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -178,6 +209,7 @@ export default function DualChartLayout() {
           syncRange={syncRange}
           onRangeChange={esRangeHandler}
           chartRef={esChartRef}
+          indicatorVis={indicatorVis}
         />
         <SymbolChart
           symbol="NQ"
@@ -187,6 +219,7 @@ export default function DualChartLayout() {
           syncRange={syncRange}
           onRangeChange={nqRangeHandler}
           chartRef={nqChartRef}
+          indicatorVis={indicatorVis}
         />
       </div>
     </div>
