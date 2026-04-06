@@ -86,6 +86,8 @@ export default function ActivityLog() {
       }),
       subscribe("system", (data) => {
         const d = data as Record<string, unknown>;
+        // Skip engine eval progress events — those go to EngineStatus, not the activity log
+        if (d.event === "engine_eval_start" || d.event === "engine_eval_done") return;
         setEntries((prev) => [makeEntry("system", "SYS", "bg-yellow-900 text-yellow-400", formatSystemMessage(d)), ...prev].slice(0, 100));
       }),
     ];

@@ -99,6 +99,7 @@ export default function LogsPage() {
       }),
       subscribe("system", (data) => {
         const d = data as Record<string, unknown>;
+        if (d.event === "engine_eval_start" || d.event === "engine_eval_done") return;
         addLive("system", JSON.stringify(d).slice(0, 80));
       }),
     ];
