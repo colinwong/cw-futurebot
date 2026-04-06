@@ -20,7 +20,7 @@ from src.db.models import (
     Signal,
     SymbolEnum,
 )
-from src.engine.risk import RiskManager
+from src.engine.risk import RiskEvaluation, RiskManager
 from src.strategy.base import StrategySignal
 
 logger = logging.getLogger(__name__)

@@ -50,19 +50,21 @@ _news_provider = None
 _news_analyzer = None
 
 # Dedicated thread pool for IB calls (ib_insync needs its own event loop)
-_ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-_ib_loop: asyncio.AbstractEventLoop | None = None
+_ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+_thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
 
 T = TypeVar("T")
 
 
 async def run_ib(fn: Callable[..., T], *args, **kwargs) -> T:
-    """Run a synchronous ib_insync call in the dedicated IB thread."""
+    """Run a synchronous ib_insync call in the IB thread pool."""
     def _run():
-        global _ib_loop
-        if _ib_loop is None:
-            _ib_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(_ib_loop)
+        import threading
+        tid = threading.get_ident()
+        if tid not in _thread_loops:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _thread_loops[tid] = loop
         return fn(*args, **kwargs)
 
     loop = asyncio.get_event_loop()
@@ -360,16 +362,23 @@ async def _strategy_evaluation_loop():
         for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
             try:
                 contract = make_ib_contract(symbol)
-                bars = await run_ib(
-                    ib.reqHistoricalData,
-                    contract,
-                    endDateTime="",
-                    durationStr="2 D",
-                    barSizeSetting="5 mins",
-                    whatToShow="TRADES",
-                    useRTH=False,
-                    formatDate=2,
-                )
+                try:
+                    bars = await asyncio.wait_for(
+                        run_ib(
+                            ib.reqHistoricalData,
+                            contract,
+                            endDateTime="",
+                            durationStr="2 D",
+                            barSizeSetting="5 mins",
+                            whatToShow="TRADES",
+                            useRTH=False,
+                            formatDate=2,
+                        ),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Historical data request timed out for %s", symbol.value)
+                    continue
 
                 if not bars or len(bars) < 50:
                     continue

@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { getStatus } from "@/lib/api";
 import { formatTime } from "@/lib/timezone";
 
 export default function EngineStatus() {
-  const [lastActivity, setLastActivity] = useState<string>("Engine stopped");
+  const [lastActivity, setLastActivity] = useState<string>("Loading...");
   const [signalCount, setSignalCount] = useState(0);
   const [evaluating, setEvaluating] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -13,6 +14,17 @@ export default function EngineStatus() {
   const intervalRef = useRef<number>(30);
   const countdownRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const { subscribe } = useWebSocket();
+
+  // Check engine status on mount
+  useEffect(() => {
+    getStatus()
+      .then((res: Record<string, unknown>) => {
+        const running = !!res.engine_running;
+        setEngineOn(running);
+        setLastActivity(running ? "Engine running — waiting for next evaluation..." : "Engine stopped");
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const unsubs = [
