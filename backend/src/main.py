@@ -267,7 +267,7 @@ async def _startup_reconciliation():
         if p.position != 0 and p.contract.secType == "FUT":
             ib_pos_map[p.contract.symbol] = {
                 "qty": int(p.position),
-                "avg_price": p.avgCost / (50 if p.contract.symbol == "ES" else 20),  # IB avgCost includes multiplier
+                "avg_price": p.avgCost / FUTURES_CONTRACTS.get(SymbolEnum(p.contract.symbol), {}).get("multiplier", 5),  # IB avgCost includes multiplier
             }
 
     # Get IB open orders

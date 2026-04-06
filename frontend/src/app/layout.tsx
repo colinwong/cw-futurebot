@@ -10,8 +10,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FutureBot — ES/NQ Trading",
-  description: "Futures trading algo bot for ES and NQ",
+  title: "FutureBot — MES/MNQ Trading",
+  description: "Futures trading algo bot for MES and MNQ",
 };
 
 export default function RootLayout({

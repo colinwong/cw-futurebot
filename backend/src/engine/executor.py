@@ -74,7 +74,7 @@ class TradingExecutor:
 
         # Subscribe to market data
         self._market_data.on_tick(self._handle_tick)
-        for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
+        for symbol in (SymbolEnum.MES, SymbolEnum.MNQ):
             await self._market_data.subscribe(symbol)
 
         # Register broker callbacks
@@ -130,7 +130,7 @@ class TradingExecutor:
 
     async def _evaluate_all_strategies(self) -> None:
         """Evaluate all strategies for all symbols."""
-        for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
+        for symbol in (SymbolEnum.MES, SymbolEnum.MNQ):
             tick = self._latest_ticks.get(symbol)
             if not tick:
                 continue

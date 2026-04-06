@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     # Trading
     es_symbol: str = "MES"
     nq_symbol: str = "MNQ"
-    max_position_size: int = 5  # max contracts per symbol
-    daily_loss_limit: float = 500.0  # dollars (appropriate for $10K account)
+    max_position_size: int = 3  # max contracts per symbol ($10K account)
+    daily_loss_limit: float = 250.0  # dollars (2.5% of $10K account)
     default_stop_ticks: int = 20  # tick-based default stop distance
     default_target_ticks: int = 40  # tick-based default target distance
 

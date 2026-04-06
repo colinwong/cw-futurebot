@@ -45,8 +45,8 @@ export default function SignalsPage() {
           className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
         >
           <option value="">All Symbols</option>
-          <option value="ES">ES</option>
-          <option value="NQ">NQ</option>
+          <option value="MES">MES</option>
+          <option value="MNQ">MNQ</option>
         </select>
         <select
           onChange={(e) => setFilter((f) => ({ ...f, action: e.target.value || undefined }))}

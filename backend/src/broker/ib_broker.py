@@ -96,7 +96,7 @@ class IBBroker(BaseBroker):
         positions = self._ib.positions()
         result = []
         for pos in positions:
-            if pos.contract.secType == "FUT" and pos.contract.symbol in ("ES", "NQ"):
+            if pos.contract.secType == "FUT" and pos.contract.symbol in ("ES", "NQ", "MES", "MNQ"):
                 result.append(
                     BrokerPosition(
                         symbol=pos.contract.symbol,

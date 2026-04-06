@@ -35,13 +35,13 @@ SETTING_DEFAULTS = {
         "default": str(app_config.default_stop_ticks),
         "type": "int",
         "label": "Default Stop Loss (ticks)",
-        "tooltip": "Default stop-loss distance in ticks from entry price when a strategy doesn't specify one. 1 tick = $0.25 for ES/NQ. Example: 20 ticks = $5.00 move = $250 risk per ES contract ($100 per NQ contract).",
+        "tooltip": "Default stop-loss distance in ticks from entry price when a strategy doesn't specify one. 1 tick = $0.25. Example: 20 ticks = $5.00 move = $25 risk per MES contract ($10 per MNQ contract).",
     },
     "default_target_ticks": {
         "default": str(app_config.default_target_ticks),
         "type": "int",
         "label": "Default Profit Target (ticks)",
-        "tooltip": "Default profit target distance in ticks from entry price. Example: 40 ticks = $10.00 move = $500 profit per ES contract ($200 per NQ contract). A 2:1 target-to-stop ratio means target should be ~2x the stop distance.",
+        "tooltip": "Default profit target distance in ticks from entry price. Example: 40 ticks = $10.00 move = $50 profit per MES contract ($20 per MNQ contract). A 2:1 target-to-stop ratio means target should be ~2x the stop distance.",
     },
     "strategy_eval_interval": {
         "default": str(app_config.strategy_eval_interval),
