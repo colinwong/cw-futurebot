@@ -446,7 +446,6 @@ async def _strategy_evaluation_loop():
 
                                 # Check trading mode
                                 trading_mode = settings.trading_mode
-                                # Check DB for override
                                 from src.db.models import AppSetting
                                 mode_result = await session.execute(
                                     _select(AppSetting).where(AppSetting.key == "trading_mode")
@@ -455,34 +454,61 @@ async def _strategy_evaluation_loop():
                                 if mode_setting:
                                     trading_mode = mode_setting.value
 
-                                if trading_mode == "live" and decision_engine:
-                                    # Execute the trade
-                                    await decision_engine.process_signal(signal, snapshot, session)
+                                # Always run risk check first
+                                from src.engine.risk import RiskManager as _RM
+                                _risk = _RM()
+                                spec = FUTURES_CONTRACTS.get(signal.symbol, {})
+                                tick_size = spec.get("tick_size", 0.25)
+                                stop_ticks = signal.suggested_stop_ticks or int(settings.default_stop_ticks)
+                                target_ticks = signal.suggested_target_ticks or int(settings.default_target_ticks)
+                                if signal.direction.value == "LONG":
+                                    stop_price = price - stop_ticks * tick_size
+                                    target_price = price + target_ticks * tick_size
                                 else:
-                                    # Signal-only mode — persist signal but don't execute
-                                    from src.db.models import Signal, Decision, DecisionActionEnum
-                                    sig_record = Signal(
-                                        snapshot_id=snapshot.id,
-                                        strategy_name=signal.strategy_name,
-                                        symbol=signal.symbol,
-                                        direction=signal.direction,
-                                        strength=signal.strength,
-                                        reasoning=signal.reasoning,
-                                    )
-                                    session.add(sig_record)
-                                    await session.flush()
+                                    stop_price = price + stop_ticks * tick_size
+                                    target_price = price - target_ticks * tick_size
 
-                                    decision = Decision(
-                                        signal_id=sig_record.id,
-                                        action=DecisionActionEnum.DEFER,
-                                        risk_evaluation={},
-                                        decision_reasoning=f"Signal-only mode — not executing. {signal.reasoning.get('description', '')}",
-                                        stop_price=None,
-                                        target_price=None,
-                                    )
-                                    session.add(decision)
+                                risk_eval = await _risk.evaluate(signal, stop_price, target_price, session)
 
-                                # Broadcast signal to UI
+                                actual_action = "REJECT"
+                                actual_reasoning = "Risk check failed"
+
+                                if not risk_eval.approved:
+                                    # Rejected by risk manager
+                                    failed = [c for c in risk_eval.checks if not c.passed]
+                                    actual_reasoning = "; ".join(f"{c.name}: {c.message}" for c in failed)
+                                    actual_action = "REJECT"
+                                elif trading_mode == "live" and decision_engine:
+                                    await decision_engine.process_signal(signal, snapshot, session)
+                                    actual_action = "EXECUTE"
+                                    actual_reasoning = "Executed"
+                                else:
+                                    actual_action = "DEFER"
+                                    actual_reasoning = "Signal-only mode"
+
+                                # Persist signal + decision
+                                sig_record = Signal(
+                                    snapshot_id=snapshot.id,
+                                    strategy_name=signal.strategy_name,
+                                    symbol=signal.symbol,
+                                    direction=signal.direction,
+                                    strength=signal.strength,
+                                    reasoning=signal.reasoning,
+                                )
+                                session.add(sig_record)
+                                await session.flush()
+
+                                dec_record = Decision(
+                                    signal_id=sig_record.id,
+                                    action=DecisionActionEnum(actual_action),
+                                    risk_evaluation=risk_eval.to_dict(),
+                                    decision_reasoning=actual_reasoning,
+                                    stop_price=stop_price,
+                                    target_price=target_price,
+                                )
+                                session.add(dec_record)
+
+                                # Broadcast signal with ACTUAL decision to UI
                                 await manager.broadcast("signal", {
                                     "id": f"live-{int(_time.time() * 1000)}",
                                     "timestamp": _datetime.now(_tz.utc).isoformat(),
@@ -492,8 +518,8 @@ async def _strategy_evaluation_loop():
                                     "strength": signal.strength,
                                     "reasoning": signal.reasoning,
                                     "decision": {
-                                        "action": "EXECUTE" if trading_mode == "live" else "DEFER",
-                                        "reasoning": f"{'Executed' if trading_mode == 'live' else 'Signal-only mode'}",
+                                        "action": actual_action,
+                                        "reasoning": actual_reasoning,
                                     },
                                 }, buffer=True)
 
