@@ -13,6 +13,8 @@ interface PositionData {
   direction: string;
   quantity: number;
   entry_price: number;
+  margin_deployed: number | null;
+  risk_amount: number | null;
   stop_price: number | null;
   target_price: number | null;
   stop_ib_order_id: number | null;
@@ -20,6 +22,11 @@ interface PositionData {
   entry_timestamp: string;
   is_open: boolean;
   protective_status: string | null;
+}
+
+function formatDollar(value: number | null): string {
+  if (value == null) return "—";
+  return value.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 function orderLabel(order: Order): string {
@@ -105,11 +112,21 @@ export default function PositionsAndOrders() {
                       <span className="text-gray-300">
                         Entry: {pos.entry_price > 0 ? pos.entry_price.toFixed(2) : "MKT (pending)"}
                       </span>
+                      {pos.margin_deployed != null && (
+                        <span className="text-yellow-400" title="Margin deployed (qty × margin per contract)">
+                          Margin: {formatDollar(pos.margin_deployed)}
+                        </span>
+                      )}
                       {pos.stop_price && (
                         <span className="text-red-400">Stop: {pos.stop_price.toFixed(2)}</span>
                       )}
                       {pos.target_price && (
                         <span className="text-green-400">Target: {pos.target_price.toFixed(2)}</span>
+                      )}
+                      {pos.risk_amount != null && (
+                        <span className="text-orange-400" title="Max risk (distance to stop × qty × multiplier)">
+                          Risk: {formatDollar(pos.risk_amount)}
+                        </span>
                       )}
                       <span className="text-gray-600">{formatTime(pos.entry_timestamp)}</span>
                     </div>

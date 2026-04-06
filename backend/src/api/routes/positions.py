@@ -3,8 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.contracts import FUTURES_CONTRACTS
 from src.db.database import get_session
-from src.db.models import Order, Position, ProtectiveOrder
+from src.db.models import Position, ProtectiveOrder, SymbolEnum
 
 router = APIRouter(prefix="/api/positions", tags=["positions"])
 
@@ -42,12 +43,26 @@ async def list_positions(
             if protective.target_order:
                 target_price = protective.target_order.limit_price
 
+        # Calculate margin deployed and risk amount
+        spec = FUTURES_CONTRACTS.get(pos.symbol, {})
+        multiplier = spec.get("multiplier", 1)
+        margin_per = {SymbolEnum.MES: 1500, SymbolEnum.MNQ: 1500, SymbolEnum.ES: 15000, SymbolEnum.NQ: 15000}
+        margin_deployed = pos.quantity * margin_per.get(pos.symbol, 1500)
+
+        # Calculate risk amount (distance to stop * quantity * multiplier)
+        risk_amount = None
+        if stop_price and pos.entry_price:
+            stop_distance = abs(pos.entry_price - stop_price)
+            risk_amount = round(stop_distance * pos.quantity * multiplier, 2)
+
         items.append({
             "id": pos.id,
             "symbol": pos.symbol.value,
             "direction": pos.direction.value,
             "quantity": pos.quantity,
             "entry_price": pos.entry_price,
+            "margin_deployed": margin_deployed,
+            "risk_amount": risk_amount,
             "stop_price": stop_price,
             "target_price": target_price,
             "stop_ib_order_id": protective.stop_ib_order_id if protective else None,

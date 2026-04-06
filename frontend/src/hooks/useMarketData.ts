@@ -48,6 +48,7 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
 
   // Fetch historical candles — always re-fetch on timeframe change to get fresh data
   const prevKey = useRef(key);
+  const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     const keyChanged = prevKey.current !== key;
     prevKey.current = key;
@@ -65,18 +66,46 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
       return;
     }
 
+    // Abort any in-flight request for this chart
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     historicalLoaded.current = false;
     setLoading(true);
-    getCandles(symbol, barSize, duration)
-      .then((res) => {
-        const data = res.candles.map((c) => ({ ...c, time: toLocalEpoch(c.time) }));
-        candleCache.set(key, data);
-        loadedKeys.add(key);
-        setCandles(data);
-        historicalLoaded.current = true;
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+
+    const fetchWithRetry = async (retries = 1) => {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        if (controller.signal.aborted) return;
+        try {
+          const res = await getCandles(symbol, barSize, duration, controller.signal);
+          if (controller.signal.aborted) return;
+          const data = res.candles.map((c) => ({ ...c, time: toLocalEpoch(c.time) }));
+          if (data.length > 0) {
+            candleCache.set(key, data);
+            loadedKeys.add(key);
+            setCandles(data);
+            historicalLoaded.current = true;
+            setLoading(false);
+            return;
+          }
+          // Empty response — retry after short delay
+          if (attempt < retries) await new Promise((r) => setTimeout(r, 1000));
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          if (attempt < retries) {
+            await new Promise((r) => setTimeout(r, 1000));
+          } else {
+            console.error(`Failed to load ${symbol} ${barSize} candles:`, err);
+          }
+        }
+      }
+      setLoading(false);
+    };
+
+    fetchWithRetry(2);
+
+    return () => controller.abort();
   }, [symbol, barSize, duration, key]);
 
   // Subscribe to real-time tick updates

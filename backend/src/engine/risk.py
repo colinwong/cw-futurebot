@@ -1,13 +1,12 @@
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.broker.base import BaseBroker
 from src.config import EXCHANGE_TZ, UTC_TZ, settings
-from src.contracts import FUTURES_CONTRACTS
 from src.db.models import (
     AppSetting,
     DirectionEnum,

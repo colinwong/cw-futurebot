@@ -13,10 +13,11 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 // Market Data
-export function getCandles(symbol: string, barSize = "5 mins", duration = "1 D") {
+export function getCandles(symbol: string, barSize = "5 mins", duration = "1 D", signal?: AbortSignal) {
   const params = new URLSearchParams({ bar_size: barSize, duration });
   return fetchApi<{ candles: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }> }>(
-    `/api/market-data/${symbol}/candles?${params}`
+    `/api/market-data/${symbol}/candles?${params}`,
+    signal ? { signal } : undefined,
   );
 }
 

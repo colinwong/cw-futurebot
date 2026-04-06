@@ -18,7 +18,6 @@ from src.db.models import (
     Position,
     ProtectiveOrder,
     Signal,
-    SymbolEnum,
 )
 from src.engine.risk import RiskEvaluation, RiskManager
 from src.strategy.base import StrategySignal

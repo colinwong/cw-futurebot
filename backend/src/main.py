@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import concurrent.futures
 from contextlib import asynccontextmanager
 from typing import Callable, TypeVar
@@ -50,14 +51,14 @@ _news_provider = None
 _news_analyzer = None
 
 # Dedicated thread pool for IB calls (ib_insync needs its own event loop)
-_ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+_ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 _thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
 
 T = TypeVar("T")
 
 
-async def run_ib(fn: Callable[..., T], *args, **kwargs) -> T:
-    """Run a synchronous ib_insync call in the IB thread pool."""
+async def run_ib(fn: Callable[..., T], *args, timeout: float = 15.0, **kwargs) -> T:
+    """Run a synchronous ib_insync call in the IB thread pool with timeout."""
     def _run():
         import threading
         tid = threading.get_ident()
@@ -68,26 +69,37 @@ async def run_ib(fn: Callable[..., T], *args, **kwargs) -> T:
         return fn(*args, **kwargs)
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_ib_executor, _run)
+    return await asyncio.wait_for(
+        loop.run_in_executor(_ib_executor, _run),
+        timeout=timeout,
+    )
 
 
 _broker_ref: IBBroker | None = None
 _engine_running = False
+_loops_started = False
 
 
-async def _connect_ib() -> bool:
+_current_client_id = random.randint(10, 999)
+
+
+async def _connect_ib(force_new_client_id: bool = False) -> bool:
     """Connect to IB Gateway and return True on success."""
-    global ib
+    global ib, _current_client_id
+    if force_new_client_id:
+        _current_client_id = random.randint(10, 999)
+        logger.info("Using new clientId %d to avoid stale session conflict", _current_client_id)
     try:
         ib = IB()
         await run_ib(
             ib.connect,
             host=settings.ib_host,
             port=settings.ib_port,
-            clientId=settings.ib_client_id,
+            clientId=_current_client_id,
             readonly=False,
+            timeout=30.0,
         )
-        logger.info("Connected to IB Gateway at %s:%d", settings.ib_host, settings.ib_port)
+        logger.info("Connected to IB Gateway at %s:%d (clientId=%d)", settings.ib_host, settings.ib_port, _current_client_id)
         return True
     except Exception as e:
         logger.warning("Could not connect to IB Gateway: %s", e)
@@ -98,7 +110,7 @@ async def _connect_ib() -> bool:
 async def _post_connect_setup():
     """Set up everything that depends on a live IB connection.
     Called at startup and after every reconnect."""
-    global _broker_ref
+    global _broker_ref, _loops_started
 
     # Enable delayed data if no real-time subscription
     await run_ib(ib.reqMarketDataType, 4)
@@ -114,14 +126,14 @@ async def _post_connect_setup():
     # Register fill tracking callback on this IB instance
     _setup_fill_tracking(asyncio.get_event_loop())
 
-    # Start the algo strategy evaluation loop
-    asyncio.create_task(_strategy_evaluation_loop())
+    # Only start long-running loops once — they survive reconnects
+    if not _loops_started:
+        asyncio.create_task(_strategy_evaluation_loop())
+        asyncio.create_task(_start_market_data_streaming())
+        _loops_started = True
 
     # Reconciliation
     await _startup_reconciliation()
-
-    # Start market data streaming
-    asyncio.create_task(_start_market_data_streaming())
 
     # Broadcast reconnect event to UI
     await manager.broadcast("system", {"event": "ib_connected"})
@@ -130,15 +142,16 @@ async def _post_connect_setup():
 async def _reconnect_ib():
     """Reconnect to IB Gateway after a disconnect."""
     global ib
-    # Disconnect old instance cleanly
+    # Force-disconnect old instance without going through thread pool (may be hung)
     if ib is not None:
         try:
-            await run_ib(ib.disconnect)
+            ib.disconnect()
         except Exception:
             pass
         ib = None
 
-    if await _connect_ib():
+    # Use a new clientId to avoid "client id already in use" from stale sessions
+    if await _connect_ib(force_new_client_id=True):
         await _post_connect_setup()
         return True
     return False
@@ -243,8 +256,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down cw-futurebot backend")
     if _news_provider:
         await _news_provider.disconnect()
-    if ib and ib.isConnected():
-        await run_ib(ib.disconnect)
+    if ib:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
     _ib_executor.shutdown(wait=False)
 
 
@@ -344,7 +360,7 @@ async def _strategy_evaluation_loop():
     from src.contracts import make_ib_contract
 
     strategies = [VWAPTrendContinuation(), BollingerMeanReversion(), ORBMomentum()]
-    risk_manager = RiskManager()
+    risk_manager = RiskManager(broker=_broker_ref)
     decision_engine = DecisionEngine(_broker_ref, risk_manager) if _broker_ref else None
 
     await asyncio.sleep(5)  # Wait for market data to initialize
@@ -464,7 +480,7 @@ async def _strategy_evaluation_loop():
 
                                 # Always run risk check first
                                 from src.engine.risk import RiskManager as _RM
-                                _risk = _RM()
+                                _risk = _RM(broker=_broker_ref)
                                 spec = FUTURES_CONTRACTS.get(signal.symbol, {})
                                 tick_size = spec.get("tick_size", 0.25)
                                 stop_ticks = signal.suggested_stop_ticks or int(settings.default_stop_ticks)
