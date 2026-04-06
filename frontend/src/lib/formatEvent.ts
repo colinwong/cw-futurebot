@@ -36,6 +36,34 @@ export function formatEventData(d: Record<string, unknown>): string {
   return parts.join(", ") || "—";
 }
 
+/**
+ * Clean any string that looks like JSON into readable text.
+ * Call this on any message before displaying — catches anything
+ * that slipped through formatEventData.
+ */
+export function cleanJsonString(s: string): string {
+  // If it doesn't look like JSON, return as-is
+  if (!s.includes("{") && !s.includes("[")) return s;
+
+  // Try to parse and re-format
+  try {
+    const parsed = JSON.parse(s);
+    if (typeof parsed === "object" && parsed !== null) {
+      return formatEventData(parsed as Record<string, unknown>);
+    }
+  } catch {
+    // Not valid JSON — clean up common patterns
+  }
+
+  // Remove JSON syntax characters for partial JSON strings
+  return s
+    .replace(/[{}[\]"]/g, "")
+    .replace(/,\s*/g, ", ")
+    .replace(/:\s*/g, ": ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function summarizeValue(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "string") return v.length > 40 ? v.slice(0, 40) + "…" : v;

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { getLogs } from "@/lib/api";
 import { formatTime, formatDateTime } from "@/lib/timezone";
-import { formatEventData } from "@/lib/formatEvent";
+import { formatEventData, cleanJsonString } from "@/lib/formatEvent";
 
 interface LogEntry {
   id: string;
@@ -104,7 +104,7 @@ export default function ActivityLog() {
                 <span className={`px-1 py-0.5 rounded text-xs ${e.typeColor}`}>
                   {e.typeLabel}
                 </span>
-                <span className={e.msgColor}>{e.message}</span>
+                <span className={e.msgColor}>{cleanJsonString(e.message)}</span>
               </div>
             </div>
           ))}

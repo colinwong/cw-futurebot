@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { getLogs } from "@/lib/api";
 import { formatDateTime } from "@/lib/timezone";
-import { formatEventData } from "@/lib/formatEvent";
+import { formatEventData, cleanJsonString } from "@/lib/formatEvent";
 
 interface LogEntry {
   id: string;
@@ -148,7 +148,7 @@ export default function LogsPage() {
                       {e.typeLabel}
                     </span>
                   </td>
-                  <td className="text-gray-300">{e.message}</td>
+                  <td className="text-gray-300">{cleanJsonString(e.message)}</td>
                 </tr>
               ))}
             </tbody>
