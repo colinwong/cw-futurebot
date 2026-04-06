@@ -359,7 +359,7 @@ async def _strategy_evaluation_loop():
 
         await manager.broadcast("system", {"event": "engine_eval_start", "interval": settings.strategy_eval_interval})
 
-        for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
+        for symbol in (SymbolEnum.MES, SymbolEnum.MNQ):
             try:
                 contract = make_ib_contract(symbol)
                 try:
@@ -704,7 +704,7 @@ async def _start_market_data_streaming():
 
     main_loop = asyncio.get_event_loop()
 
-    for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
+    for symbol in (SymbolEnum.MES, SymbolEnum.MNQ):
         contract = make_ib_contract(symbol)
         await run_ib(ib.qualifyContracts, contract)
 

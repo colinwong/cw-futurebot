@@ -6,7 +6,7 @@ import type { Symbol } from "@/lib/types";
 
 export default function OrderEntry() {
   const { placeBracket, placingOrder, error } = useOrders();
-  const [symbol, setSymbol] = useState<Symbol>("ES");
+  const [symbol, setSymbol] = useState<Symbol>("MES");
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [quantity, setQuantity] = useState(1);
   const [orderType, setOrderType] = useState("MARKET");
@@ -46,7 +46,7 @@ export default function OrderEntry() {
 
       {/* Symbol + Buy/Sell on one row */}
       <div className="flex gap-1.5">
-        {(["ES", "NQ"] as Symbol[]).map((s) => (
+        {(["MES", "MNQ"] as Symbol[]).map((s) => (
           <button
             key={s}
             type="button"

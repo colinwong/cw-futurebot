@@ -11,7 +11,7 @@ from src.strategy.base import BaseStrategy, StrategySignal, StrategyState
 
 logger = logging.getLogger(__name__)
 
-STOP_BEYOND_BAND = {SymbolEnum.ES: 4.0, SymbolEnum.NQ: 18.0}
+STOP_BEYOND_BAND = {SymbolEnum.ES: 4.0, SymbolEnum.MES: 4.0, SymbolEnum.NQ: 18.0, SymbolEnum.MNQ: 18.0}
 
 
 class BollingerMeanReversion(BaseStrategy):

@@ -28,6 +28,8 @@ class Base(DeclarativeBase):
 class SymbolEnum(str, enum.Enum):
     ES = "ES"
     NQ = "NQ"
+    MES = "MES"
+    MNQ = "MNQ"
 
 
 class DirectionEnum(str, enum.Enum):

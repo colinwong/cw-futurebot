@@ -1,6 +1,6 @@
 // Shared TypeScript types matching backend schemas
 
-export type Symbol = "ES" | "NQ";
+export type Symbol = "ES" | "NQ" | "MES" | "MNQ";
 export type Direction = "LONG" | "SHORT";
 export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET" | "LIMIT" | "STOP" | "STOP_LIMIT";

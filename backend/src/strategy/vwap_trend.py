@@ -11,8 +11,8 @@ from src.strategy.base import BaseStrategy, StrategySignal, StrategyState
 
 logger = logging.getLogger(__name__)
 
-# Stop distances in points
-STOP_POINTS = {SymbolEnum.ES: 6.0, SymbolEnum.NQ: 25.0}
+# Stop distances in points (same price action for ES/MES and NQ/MNQ)
+STOP_POINTS = {SymbolEnum.ES: 6.0, SymbolEnum.MES: 6.0, SymbolEnum.NQ: 25.0, SymbolEnum.MNQ: 25.0}
 TARGET_MULTIPLIER = 1.5  # Target = 1.5x stop distance
 
 

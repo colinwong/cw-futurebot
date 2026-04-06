@@ -43,10 +43,10 @@ class Settings(BaseSettings):
     port: int = 8002
 
     # Trading
-    es_symbol: str = "ES"
-    nq_symbol: str = "NQ"
+    es_symbol: str = "MES"
+    nq_symbol: str = "MNQ"
     max_position_size: int = 5  # max contracts per symbol
-    daily_loss_limit: float = 2000.0  # dollars
+    daily_loss_limit: float = 500.0  # dollars (appropriate for $10K account)
     default_stop_ticks: int = 20  # tick-based default stop distance
     default_target_ticks: int = 40  # tick-based default target distance
 

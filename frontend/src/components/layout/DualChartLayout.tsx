@@ -192,11 +192,11 @@ export default function DualChartLayout() {
     return unsub;
   }, [subscribe]);
 
-  const esPositions = useMemo(() => positions.filter((p) => p.symbol === "ES"), [positions]);
-  const nqPositions = useMemo(() => positions.filter((p) => p.symbol === "NQ"), [positions]);
+  const esPositions = useMemo(() => positions.filter((p) => p.symbol === "MES"), [positions]);
+  const nqPositions = useMemo(() => positions.filter((p) => p.symbol === "MNQ"), [positions]);
   const barSizeSec = BAR_SIZES[barSize] || 300;
-  const esRangeHandler = useMemo(() => makeRangeHandler("NQ"), [makeRangeHandler]);
-  const nqRangeHandler = useMemo(() => makeRangeHandler("ES"), [makeRangeHandler]);
+  const esRangeHandler = useMemo(() => makeRangeHandler("MNQ"), [makeRangeHandler]);
+  const nqRangeHandler = useMemo(() => makeRangeHandler("MES"), [makeRangeHandler]);
 
   return (
     <div>
@@ -226,7 +226,7 @@ export default function DualChartLayout() {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <SymbolChart
-          symbol="ES"
+          symbol="MES"
           positions={esPositions}
           barSize={barSize}
           barSizeSec={barSizeSec}
@@ -236,7 +236,7 @@ export default function DualChartLayout() {
           indicatorVis={indicatorVis}
         />
         <SymbolChart
-          symbol="NQ"
+          symbol="MNQ"
           positions={nqPositions}
           barSize={barSize}
           barSizeSec={barSizeSec}

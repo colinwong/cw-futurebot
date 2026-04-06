@@ -11,16 +11,30 @@ FUTURES_CONTRACTS = {
     SymbolEnum.ES: {
         "exchange": "CME",
         "currency": "USD",
-        "multiplier": 50,  # $50 per point
+        "multiplier": 50,
         "tick_size": 0.25,
         "trading_class": "ES",
     },
     SymbolEnum.NQ: {
         "exchange": "CME",
         "currency": "USD",
-        "multiplier": 20,  # $20 per point
+        "multiplier": 20,
         "tick_size": 0.25,
         "trading_class": "NQ",
+    },
+    SymbolEnum.MES: {
+        "exchange": "CME",
+        "currency": "USD",
+        "multiplier": 5,  # $5 per point (1/10th of ES)
+        "tick_size": 0.25,
+        "trading_class": "MES",
+    },
+    SymbolEnum.MNQ: {
+        "exchange": "CME",
+        "currency": "USD",
+        "multiplier": 2,  # $2 per point (1/10th of NQ)
+        "tick_size": 0.25,
+        "trading_class": "MNQ",
     },
 }
 

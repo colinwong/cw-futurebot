@@ -14,7 +14,7 @@ from src.strategy.base import BaseStrategy, StrategySignal, StrategyState
 logger = logging.getLogger(__name__)
 
 ET = ZoneInfo("America/New_York")
-MAX_STOP = {SymbolEnum.ES: 12.0, SymbolEnum.NQ: 50.0}
+MAX_STOP = {SymbolEnum.ES: 12.0, SymbolEnum.MES: 12.0, SymbolEnum.NQ: 50.0, SymbolEnum.MNQ: 50.0}
 IB_EXTENSION = 0.25  # Breakout must extend 25% of IB range beyond boundary
 
 
