@@ -168,6 +168,7 @@ export type WSEventType =
   | "news"
   | "account"
   | "system"
+  | "strategy_eval"
   | "pong";
 
 export interface WSMessage {

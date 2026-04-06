@@ -424,6 +424,17 @@ async def _strategy_evaluation_loop():
                                 recent_news=[],
                             )
 
+                            # Broadcast last eval result per strategy+symbol (pinned status)
+                            await manager.broadcast("strategy_eval", {
+                                "strategy": strategy.name,
+                                "symbol": symbol.value,
+                                "timestamp": _datetime.now(_tz.utc).isoformat(),
+                                "price": price,
+                                "has_signal": signal is not None,
+                                "direction": signal.direction.value if signal else None,
+                                "reasoning": signal.reasoning.get("description", "") if signal else "No conditions met",
+                            })
+
                             if signal:
                                 logger.info(
                                     "Signal: %s %s %s — %s",
