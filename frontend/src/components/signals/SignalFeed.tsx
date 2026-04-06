@@ -14,9 +14,12 @@ export default function SignalFeed() {
   // Load recent signals from DB on mount
   useEffect(() => {
     if (historicalLoaded.current) return;
+    const clearedAt = localStorage.getItem("futurebot_clear_signals") || "";
     getSignals({ limit: 30 })
       .then((res) => {
-        setSignals(res.signals as unknown as SignalRecord[]);
+        const filtered = (res.signals as unknown as SignalRecord[])
+          .filter((s) => !clearedAt || s.timestamp > clearedAt);
+        setSignals(filtered);
         historicalLoaded.current = true;
       })
       .catch(console.error);
@@ -31,9 +34,19 @@ export default function SignalFeed() {
     return unsub;
   }, [subscribe]);
 
+  const handleClear = () => {
+    setSignals([]);
+    try { localStorage.setItem("futurebot_clear_signals", new Date().toISOString()); } catch {}
+  };
+
   return (
     <div className="p-3 h-full">
-      <div className="text-sm font-bold text-gray-300 mb-2">Signal Feed</div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-bold text-gray-300">Signal Feed</span>
+        {signals.length > 0 && (
+          <button onClick={handleClear} className="text-xs text-gray-600 hover:text-gray-400">Clear</button>
+        )}
+      </div>
       {signals.length === 0 ? (
         <div className="text-xs text-gray-600">No signals yet — algo engine not running</div>
       ) : (

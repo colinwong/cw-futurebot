@@ -47,10 +47,12 @@ export default function ActivityLog() {
   // Load recent activity from DB on mount
   useEffect(() => {
     if (historicalLoaded.current) return;
+    const clearedAt = localStorage.getItem("futurebot_clear_activity") || "";
     getLogs(30)
       .then((res) => {
         const historical: LogEntry[] = res.entries
-          .filter((e) => e.type !== "news") // news is in its own feed
+          .filter((e) => e.type !== "news")
+          .filter((e) => !clearedAt || e.timestamp > clearedAt)
           .map((e, i) => {
             const cfg = TYPE_CONFIG[e.type] || TYPE_CONFIG.system;
             return {
@@ -94,9 +96,20 @@ export default function ActivityLog() {
     return () => unsubs.forEach((u) => u());
   }, [subscribe]);
 
+  const handleClear = () => {
+    setEntries([]);
+    const ts = new Date().toISOString();
+    try { localStorage.setItem("futurebot_clear_activity", ts); } catch {}
+  };
+
   return (
     <div className="p-3 h-full">
-      <div className="text-sm font-bold text-gray-300 mb-2">Activity Log</div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-bold text-gray-300">Activity Log</span>
+        {entries.length > 0 && (
+          <button onClick={handleClear} className="text-xs text-gray-600 hover:text-gray-400">Clear</button>
+        )}
+      </div>
       {entries.length === 0 ? (
         <div className="text-xs text-gray-600">No activity yet...</div>
       ) : (

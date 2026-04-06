@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { formatDateTime } from "@/lib/timezone";
 import type { NewsEvent, ImpactRating, Sentiment } from "@/lib/types";
@@ -22,12 +22,14 @@ export default function NewsFeed() {
   const [news, setNews] = useState<NewsEvent[]>([]);
   const { subscribe } = useWebSocket();
 
+  const clearedAtRef = useRef(typeof window !== "undefined" ? localStorage.getItem("futurebot_clear_news") || "" : "");
+
   useEffect(() => {
     const unsub = subscribe("news", (data) => {
       const item = data as NewsEvent;
+      if (clearedAtRef.current && item.timestamp <= clearedAtRef.current) return;
       setNews((prev) => {
         const updated = [item, ...prev.filter((n) => n.id !== item.id)].slice(0, 50);
-        // Sort by article timestamp, newest first
         updated.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         return updated;
       });
@@ -35,9 +37,21 @@ export default function NewsFeed() {
     return unsub;
   }, [subscribe]);
 
+  const handleClear = () => {
+    setNews([]);
+    const ts = new Date().toISOString();
+    clearedAtRef.current = ts;
+    try { localStorage.setItem("futurebot_clear_news", ts); } catch {}
+  };
+
   return (
     <div className="p-3 h-full">
-      <div className="text-sm font-bold text-gray-300 mb-2">News Feed</div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-bold text-gray-300">News Feed</span>
+        {news.length > 0 && (
+          <button onClick={handleClear} className="text-xs text-gray-600 hover:text-gray-400">Clear</button>
+        )}
+      </div>
       {news.length === 0 ? (
         <div className="text-xs text-gray-600">Waiting for news...</div>
       ) : (
