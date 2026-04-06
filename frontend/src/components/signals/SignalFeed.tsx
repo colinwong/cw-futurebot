@@ -26,9 +26,11 @@ export default function SignalFeed() {
   }, []);
 
   // Live signals via WebSocket
+  const clearedAtRef = useRef(typeof window !== "undefined" ? localStorage.getItem("futurebot_clear_signals") || "" : "");
   useEffect(() => {
     const unsub = subscribe("signal", (data) => {
       const signal = data as SignalRecord;
+      if (clearedAtRef.current && signal.timestamp <= clearedAtRef.current) return;
       setSignals((prev) => [signal, ...prev].slice(0, 50));
     });
     return unsub;
@@ -36,7 +38,9 @@ export default function SignalFeed() {
 
   const handleClear = () => {
     setSignals([]);
-    try { localStorage.setItem("futurebot_clear_signals", new Date().toISOString()); } catch {}
+    const ts = new Date().toISOString();
+    clearedAtRef.current = ts;
+    try { localStorage.setItem("futurebot_clear_signals", ts); } catch {}
   };
 
   return (
