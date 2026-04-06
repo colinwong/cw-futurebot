@@ -284,6 +284,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       prevLengthRef.current = 0;
       setRangeSilentlyRef.current = null;
       fitContentSilentlyRef.current = null;
+      visInitialized.current = false;
     };
   }, [height, barSizeSec]);
 
@@ -363,9 +364,14 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     prevLengthRef.current = candles.length;
   }, [candles]);
 
-  // Update indicator visibility when toggled
+  // Update indicator visibility when toggled (skip initial — data effect handles that)
+  const visInitialized = useRef(false);
   useEffect(() => {
-    if (!showIndicators) return;
+    if (!visInitialized.current) {
+      visInitialized.current = true;
+      return;
+    }
+    if (!showIndicators || candles.length === 0) return;
     const toLineData = (pts: { time: number; value: number }[]) =>
       pts.map((p) => ({ time: p.time as Time, value: p.value }));
     const empty: { time: Time; value: number }[] = [];
@@ -374,7 +380,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 && candles.length > 50 ? toLineData(computeEMA(candles, 50)) : empty);
     if (ema200Ref.current) ema200Ref.current.setData(indicatorVis.ema200 && candles.length > 200 ? toLineData(computeEMA(candles, 200)) : empty);
     if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap && candles.length > 0 ? toLineData(computeVWAP(candles)) : empty);
-  }, [indicatorVis, showIndicators]);
+  }, [indicatorVis, showIndicators, candles]);
 
   // Update markers
   useEffect(() => {
