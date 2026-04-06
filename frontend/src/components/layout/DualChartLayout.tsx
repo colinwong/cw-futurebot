@@ -177,18 +177,20 @@ export default function DualChartLayout() {
     setTimeout(() => { syncSource.current = null; }, 50);
   }, []);
 
-  useEffect(() => {
+  const fetchPositions = () => {
     getPositions(true)
       .then((res) => setPositions(res.positions as unknown as PositionOverlay[]))
       .catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchPositions();
+    const interval = setInterval(fetchPositions, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    const unsub = subscribe("position", () => {
-      getPositions(true)
-        .then((res) => setPositions(res.positions as unknown as PositionOverlay[]))
-        .catch(console.error);
-    });
+    const unsub = subscribe("position", fetchPositions);
     return unsub;
   }, [subscribe]);
 

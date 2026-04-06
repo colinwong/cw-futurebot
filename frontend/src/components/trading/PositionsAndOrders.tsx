@@ -51,7 +51,12 @@ export default function PositionsAndOrders() {
       .catch(console.error);
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => {
+    fetchAll();
+    // Poll every 5 seconds as safety net — WS events may not always fire
+    const interval = setInterval(fetchAll, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const unsubs = [

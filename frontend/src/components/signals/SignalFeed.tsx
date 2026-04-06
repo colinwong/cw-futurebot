@@ -11,9 +11,8 @@ export default function SignalFeed() {
   const { subscribe } = useWebSocket();
   const historicalLoaded = useRef(false);
 
-  // Load recent signals from DB on mount
-  useEffect(() => {
-    if (historicalLoaded.current) return;
+  // Load recent signals from DB on mount + poll every 10s
+  const fetchSignals = () => {
     const clearedAt = localStorage.getItem("futurebot_clear_signals") || "";
     getSignals({ limit: 30 })
       .then((res) => {
@@ -23,6 +22,12 @@ export default function SignalFeed() {
         historicalLoaded.current = true;
       })
       .catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchSignals();
+    const interval = setInterval(fetchSignals, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   // Live signals via WebSocket
