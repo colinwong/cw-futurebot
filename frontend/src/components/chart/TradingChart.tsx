@@ -251,16 +251,16 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
         color: "#ec4899", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
       });
       vwapSd1Upper = chart.addSeries(LineSeries, {
-        color: "rgba(236, 72, 153, 0.3)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
+        color: "rgba(236, 72, 153, 0.6)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
       });
       vwapSd1Lower = chart.addSeries(LineSeries, {
-        color: "rgba(236, 72, 153, 0.3)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
+        color: "rgba(236, 72, 153, 0.6)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
       });
       vwapSd2Upper = chart.addSeries(LineSeries, {
-        color: "rgba(236, 72, 153, 0.15)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
+        color: "rgba(236, 72, 153, 0.4)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
       });
       vwapSd2Lower = chart.addSeries(LineSeries, {
-        color: "rgba(236, 72, 153, 0.15)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
+        color: "rgba(236, 72, 153, 0.4)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
       });
     }
 
