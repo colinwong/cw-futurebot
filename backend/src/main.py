@@ -14,7 +14,7 @@ from src.api.routes import settings as settings_routes
 from src.api.routes import signals, strategy, trades, ws
 from src.api.routes.ws import manager
 from src.config import settings
-from src.contracts import make_ib_contract
+from src.contracts import FUTURES_CONTRACTS, make_ib_contract
 from src.db.models import SymbolEnum
 from src.db.database import async_session
 from src.db.models import (
