@@ -19,7 +19,7 @@ interface PositionOverlay {
 }
 
 // Module-level: persist shared timeframe and indicator visibility across navigations
-let savedBarSize = "5 mins";
+let savedBarSize = "1 min";
 
 export type IndicatorVisibility = { ema9: boolean; ema21: boolean; ema50: boolean; ema200: boolean; vwap: boolean };
 const defaultVis: IndicatorVisibility = { ema9: true, ema21: true, ema50: true, ema200: false, vwap: true };
