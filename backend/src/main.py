@@ -18,17 +18,22 @@ from src.config import settings
 from src.contracts import FUTURES_CONTRACTS, make_ib_contract
 from src.db.models import SymbolEnum
 from src.db.database import async_session
+from sqlalchemy.orm import selectinload
 from src.db.models import (
     AppSetting,
     Decision,
     DecisionActionEnum,
+    DirectionEnum,
     Fill,
     ImpactRatingEnum,
     MarketSnapshot,
     NewsEvent,
     Order as OrderModel,
+    OrderSideEnum,
     OrderStatusEnum,
+    OrderTypeEnum,
     Position,
+    ProtectiveOrder,
     SentimentEnum,
     Signal,
     SystemEvent,
@@ -126,14 +131,16 @@ async def _post_connect_setup():
     # Register fill tracking callback on this IB instance
     _setup_fill_tracking(asyncio.get_event_loop())
 
+    # Reconciliation — always run on connect/reconnect
+    await _startup_reconciliation()
+
     # Only start long-running loops once — they survive reconnects
     if not _loops_started:
         asyncio.create_task(_strategy_evaluation_loop())
         asyncio.create_task(_start_market_data_streaming())
+        asyncio.create_task(_periodic_reconciliation_loop())
+        asyncio.create_task(_ib_connection_monitor())
         _loops_started = True
-
-    # Reconciliation
-    await _startup_reconciliation()
 
     # Broadcast reconnect event to UI
     await manager.broadcast("system", {"event": "ib_connected"})
@@ -179,15 +186,12 @@ async def lifespan(app: FastAPI):
     global ib
     logger.info("Starting cw-futurebot backend on port %d", settings.port)
 
-    # Initial IB connection
+    # Initial IB connection — _post_connect_setup starts all background loops
     if await _connect_ib():
         await _post_connect_setup()
-
-    # Start connection monitor (auto-reconnect)
-    asyncio.create_task(_ib_connection_monitor())
-
-    # Start periodic reconciliation loop
-    asyncio.create_task(_periodic_reconciliation_loop())
+    else:
+        # IB not available yet — start connection monitor so it can reconnect later
+        asyncio.create_task(_ib_connection_monitor())
 
     # Start news provider + analyzer
     global _news_provider, _news_analyzer
@@ -356,6 +360,98 @@ async def _startup_reconciliation():
 
         await session.commit()
 
+        # Check: positions with missing protective orders — re-place brackets
+        if _broker_ref:
+            # Re-read positions after commit
+            result = await session.execute(
+                _select(Position)
+                .options(
+                    selectinload(Position.protective_orders)
+                    .selectinload(ProtectiveOrder.stop_order),
+                    selectinload(Position.protective_orders)
+                    .selectinload(ProtectiveOrder.target_order),
+                )
+                .where(Position.is_open.is_(True))
+            )
+            open_positions = result.scalars().all()
+
+            for pos in open_positions:
+                # Check if this position has active protective orders at IB
+                has_live_stop = False
+                has_live_target = False
+                if pos.protective_orders:
+                    prot = pos.protective_orders[0]
+                    if prot.stop_ib_order_id and prot.stop_ib_order_id in ib_order_ids:
+                        has_live_stop = True
+                    if prot.target_ib_order_id and prot.target_ib_order_id in ib_order_ids:
+                        has_live_target = True
+
+                if not has_live_stop or not has_live_target:
+                    # Position is naked — re-place protective orders using default ticks
+                    spec = FUTURES_CONTRACTS.get(pos.symbol, {})
+                    tick_size = spec.get("tick_size", 0.25)
+                    stop_ticks = settings.default_stop_ticks
+                    target_ticks = settings.default_target_ticks
+
+                    if pos.direction == DirectionEnum.LONG:
+                        stop_price = pos.entry_price - (stop_ticks * tick_size)
+                        target_price = pos.entry_price + (target_ticks * tick_size)
+                    else:
+                        stop_price = pos.entry_price + (stop_ticks * tick_size)
+                        target_price = pos.entry_price - (target_ticks * tick_size)
+
+                    try:
+                        target_id, stop_id = await _broker_ref.place_oca_protective_orders(
+                            symbol=pos.symbol,
+                            direction=pos.direction,
+                            quantity=pos.quantity,
+                            stop_price=stop_price,
+                            target_price=target_price,
+                        )
+
+                        # Create DB records for the new protective orders
+                        stop_side = OrderSideEnum.SELL if pos.direction == DirectionEnum.LONG else OrderSideEnum.BUY
+                        new_stop = OrderModel(
+                            symbol=pos.symbol,
+                            side=stop_side,
+                            order_type=OrderTypeEnum.STOP,
+                            quantity=pos.quantity,
+                            stop_price=stop_price,
+                            ib_order_id=stop_id,
+                            status=OrderStatusEnum.SUBMITTED,
+                        )
+                        new_target = OrderModel(
+                            symbol=pos.symbol,
+                            side=stop_side,
+                            order_type=OrderTypeEnum.LIMIT,
+                            quantity=pos.quantity,
+                            limit_price=target_price,
+                            ib_order_id=target_id,
+                            status=OrderStatusEnum.SUBMITTED,
+                        )
+                        session.add(new_stop)
+                        session.add(new_target)
+                        await session.flush()
+
+                        new_prot = ProtectiveOrder(
+                            position_id=pos.id,
+                            stop_order_id=new_stop.id,
+                            target_order_id=new_target.id,
+                            stop_ib_order_id=stop_id,
+                            target_ib_order_id=target_id,
+                            verified_at=_datetime.now(_tz.utc),
+                        )
+                        session.add(new_prot)
+                        await session.commit()
+
+                        discrepancies.append(
+                            f"Re-placed OCA brackets for {pos.direction.value} {pos.symbol.value} x{pos.quantity}: "
+                            f"stop={stop_price:.2f}, target={target_price:.2f}"
+                        )
+                    except Exception as e:
+                        discrepancies.append(f"FAILED to re-place brackets for {pos.symbol.value}: {e}")
+                        logger.exception("Failed to re-place brackets for %s", pos.symbol.value)
+
         if discrepancies:
             logger.warning("Reconciliation found %d discrepancies:", len(discrepancies))
             for d in discrepancies:
@@ -409,18 +505,17 @@ async def _strategy_evaluation_loop():
             try:
                 contract = make_ib_contract(symbol)
                 try:
-                    bars = await asyncio.wait_for(
-                        run_ib(
-                            ib.reqHistoricalData,
-                            contract,
-                            endDateTime="",
-                            durationStr="2 D",
-                            barSizeSetting="5 mins",
-                            whatToShow="TRADES",
-                            useRTH=False,
-                            formatDate=2,
-                        ),
-                        timeout=15,
+                    await run_ib(ib.qualifyContracts, contract, timeout=5.0)
+                    bars = await run_ib(
+                        ib.reqHistoricalData,
+                        contract,
+                        endDateTime="",
+                        durationStr="2 D",
+                        barSizeSetting="5 mins",
+                        whatToShow="TRADES",
+                        useRTH=False,
+                        formatDate=2,
+                        timeout=30.0,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Historical data request timed out for %s", symbol.value)

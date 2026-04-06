@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import logging
+import time
 from typing import Callable
 
 from ib_insync import IB, LimitOrder, MarketOrder, StopOrder, Trade
@@ -76,8 +77,10 @@ class IBBroker(BaseBroker):
         return self._ib.isConnected()
 
     async def get_account(self) -> AccountInfo:
-        self._ib.reqAccountSummary()
-        summary = self._ib.accountSummary()
+        summary = await self._run(self._ib.accountSummary)
+        if not summary:
+            await self._run(self._ib.reqAccountSummary)
+            summary = await self._run(self._ib.accountSummary)
 
         values = {}
         for item in summary:
@@ -185,40 +188,53 @@ class IBBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> BracketOrderResult:
+        """Place entry + OCA stop/target. OCA orders survive client disconnects
+        (unlike parent-child brackets which IB cancels when the client drops)."""
+
         def _place():
             contract = make_ib_contract(symbol)
             self._ib.qualifyContracts(contract)
 
-            side = "BUY" if direction == DirectionEnum.LONG else "SELL"
+            entry_side = "BUY" if direction == DirectionEnum.LONG else "SELL"
+            exit_side = "SELL" if direction == DirectionEnum.LONG else "BUY"
 
-            bracket = self._ib.bracketOrder(
-                action=side,
-                quantity=quantity,
-                limitPrice=entry_price or 0,
-                takeProfitPrice=target_price,
-                stopLossPrice=stop_price,
-            )
-
-            parent_order = bracket[0]
+            # 1. Place entry order
             if entry_order_type == "MARKET":
-                parent_order.orderType = "MKT"
-                parent_order.lmtPrice = 0
+                entry_order = MarketOrder(entry_side, quantity)
+            else:
+                entry_order = LimitOrder(entry_side, quantity, entry_price)
+            entry_trade = self._ib.placeOrder(contract, entry_order)
 
-            trades = []
-            for order in bracket:
-                trade = self._ib.placeOrder(contract, order)
-                trades.append(trade)
+            # Wait for entry fill before placing OCA exits
+            for _ in range(50):  # up to 5 seconds
+                self._ib.sleep(0.1)
+                if entry_trade.orderStatus.status == "Filled":
+                    break
+
+            # 2. Place stop and target as independent OCA group
+            oca_group = f"futurebot_{symbol.value}_{int(time.time())}"
+
+            target_order = LimitOrder(exit_side, quantity, target_price)
+            target_order.ocaGroup = oca_group
+            target_order.ocaType = 1  # Cancel remaining on fill
+
+            stop_order = StopOrder(exit_side, quantity, stop_price)
+            stop_order.ocaGroup = oca_group
+            stop_order.ocaType = 1
+
+            target_trade = self._ib.placeOrder(contract, target_order)
+            stop_trade = self._ib.placeOrder(contract, stop_order)
 
             return BracketOrderResult(
-                entry_order_id=trades[0].order.orderId,
-                target_order_id=trades[1].order.orderId,
-                stop_order_id=trades[2].order.orderId,
+                entry_order_id=entry_trade.order.orderId,
+                target_order_id=target_trade.order.orderId,
+                stop_order_id=stop_trade.order.orderId,
             )
 
         result = await self._run(_place)
 
         logger.info(
-            "Placed bracket order for %s %s: entry=%d, stop=%d, target=%d (stop=%.2f, target=%.2f)",
+            "Placed OCA bracket for %s %s: entry=%d, stop=%d, target=%d (stop=%.2f, target=%.2f)",
             direction.value,
             symbol.value,
             result.entry_order_id,
@@ -228,6 +244,43 @@ class IBBroker(BaseBroker):
             target_price,
         )
         return result
+
+    async def place_oca_protective_orders(
+        self,
+        symbol: SymbolEnum,
+        direction: DirectionEnum,
+        quantity: int,
+        stop_price: float,
+        target_price: float,
+    ) -> tuple[int, int]:
+        """Place standalone OCA stop+target for an existing position (used by reconciliation)."""
+
+        def _place():
+            contract = make_ib_contract(symbol)
+            self._ib.qualifyContracts(contract)
+
+            exit_side = "SELL" if direction == DirectionEnum.LONG else "BUY"
+            oca_group = f"futurebot_{symbol.value}_{int(time.time())}"
+
+            target_order = LimitOrder(exit_side, quantity, target_price)
+            target_order.ocaGroup = oca_group
+            target_order.ocaType = 1
+
+            stop_order = StopOrder(exit_side, quantity, stop_price)
+            stop_order.ocaGroup = oca_group
+            stop_order.ocaType = 1
+
+            target_trade = self._ib.placeOrder(contract, target_order)
+            stop_trade = self._ib.placeOrder(contract, stop_order)
+
+            return target_trade.order.orderId, stop_trade.order.orderId
+
+        target_id, stop_id = await self._run(_place)
+        logger.info(
+            "Placed OCA protective orders for %s %s x%d: stop=%d (%.2f), target=%d (%.2f)",
+            direction.value, symbol.value, quantity, stop_id, stop_price, target_id, target_price,
+        )
+        return target_id, stop_id
 
     async def cancel_order(self, order_id: int) -> None:
         def _cancel():
