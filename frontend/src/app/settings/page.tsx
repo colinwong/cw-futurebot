@@ -14,6 +14,11 @@ const TIMEZONE_OPTIONS = [
   { value: "UTC", label: "UTC" },
 ];
 
+const TRADING_MODE_OPTIONS = [
+  { value: "signal_only", label: "Signal Only (observe, no trades)" },
+  { value: "live", label: "Live Trading (auto-execute signals)" },
+];
+
 const MODEL_OPTIONS = [
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (fast/cheap)" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6 (accurate/costly)" },
@@ -124,6 +129,20 @@ export default function SettingsPage() {
       );
     }
 
+    if (key === "trading_mode") {
+      return (
+        <select
+          value={values[key]}
+          onChange={(e) => updateValue(key, e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
+        >
+          {TRADING_MODE_OPTIONS.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
+      );
+    }
+
     if (key === "news_analysis_model") {
       return (
         <select
@@ -210,9 +229,63 @@ export default function SettingsPage() {
       {/* Engine Parameters */}
       <div className="bg-gray-900 rounded p-4 mb-4">
         <h2 className="text-sm font-bold mb-3">Engine Parameters</h2>
+        {renderSettingRow("trading_mode")}
         {renderSettingRow("strategy_eval_interval")}
         {renderSettingRow("reconciliation_interval")}
         {renderSettingRow("news_analysis_model")}
+      </div>
+
+      {/* Strategy Overview */}
+      <div className="bg-gray-900 rounded p-4 mb-4">
+        <h2 className="text-sm font-bold mb-3">Active Strategies</h2>
+        <div className="space-y-4 text-xs">
+          <div className="border-b border-gray-800 pb-3">
+            <div className="font-bold text-gray-300 mb-1">1. VWAP Trend Continuation</div>
+            <div className="text-gray-500 mb-2">
+              Trend-following on 5-minute bars. Waits for price to pull back to VWAP during an established
+              trend (EMA21 {">"} EMA50), then enters when momentum resumes (RSI recovering, MACD turning positive).
+              Best on trend days. Stop: ES 6pts / NQ 25pts. Target: 1.5x stop distance.
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-400">
+              <div>Trend filter: <span className="text-gray-300">EMA(21) vs EMA(50)</span></div>
+              <div>Entry trigger: <span className="text-gray-300">Pullback to VWAP + RSI 45-65</span></div>
+              <div>Confirmation: <span className="text-gray-300">MACD histogram positive</span></div>
+              <div>Timeframe: <span className="text-gray-300">5-minute bars</span></div>
+            </div>
+          </div>
+
+          <div className="border-b border-gray-800 pb-3">
+            <div className="font-bold text-gray-300 mb-1">2. Bollinger Mean Reversion</div>
+            <div className="text-gray-500 mb-2">
+              Fades price extremes at Bollinger Bands during range-bound sessions. Only activates when
+              volatility is contracting (ATR below average), EMAs are converged (flat market), and no new
+              session extremes in 8 bars. Enters on band touch with RSI extreme + rejection candle.
+              Best on range/bracket days. Target: middle Bollinger Band.
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-400">
+              <div>Range filter: <span className="text-gray-300">ATR(14) {"<"} SMA(ATR,20)</span></div>
+              <div>Entry: <span className="text-gray-300">Band touch + RSI {"<"}30/{">"}70</span></div>
+              <div>Rejection: <span className="text-gray-300">Close in upper/lower 60% of bar</span></div>
+              <div>Timeframe: <span className="text-gray-300">15-minute bars</span></div>
+            </div>
+          </div>
+
+          <div>
+            <div className="font-bold text-gray-300 mb-1">3. Opening Range Breakout (ORB)</div>
+            <div className="text-gray-500 mb-2">
+              Trades breakout from the first 30 minutes of Regular Trading Hours (9:30-10:00 ET).
+              After the Initial Balance (IB) forms, enters when price breaks beyond IB + 25% extension
+              with momentum confirmation (RSI {">"}60, EMA9 {">"} EMA21). Only trades 10:00-12:00 ET.
+              Stop at opposite side of IB. Target: 1.0x IB range.
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-400">
+              <div>IB window: <span className="text-gray-300">9:30-10:00 ET</span></div>
+              <div>Breakout: <span className="text-gray-300">IB + 25% of IB range</span></div>
+              <div>Max entry time: <span className="text-gray-300">12:00 ET</span></div>
+              <div>Max stop: <span className="text-gray-300">ES 12pts / NQ 50pts</span></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Settings Audit Trail */}

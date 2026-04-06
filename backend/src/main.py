@@ -355,9 +355,10 @@ async def _strategy_evaluation_loop():
         if not ib or not ib.isConnected():
             continue
 
+        await manager.broadcast("system", {"event": "engine_eval_start", "interval": settings.strategy_eval_interval})
+
         for symbol in (SymbolEnum.ES, SymbolEnum.NQ):
             try:
-                # Fetch recent 5-min bars for indicators
                 contract = make_ib_contract(symbol)
                 bars = await run_ib(
                     ib.reqHistoricalData,
@@ -483,6 +484,8 @@ async def _strategy_evaluation_loop():
 
             except Exception:
                 logger.exception("Error in strategy evaluation for %s", symbol.value)
+
+        await manager.broadcast("system", {"event": "engine_eval_done"})
 
 
 async def _periodic_reconciliation_loop():

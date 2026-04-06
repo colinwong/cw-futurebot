@@ -85,6 +85,12 @@ function SymbolChart({
             </span>
           )}
         </div>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#f59e0b] inline-block" />EMA9</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#3b82f6] inline-block" />EMA21</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#8b5cf6] inline-block" />EMA50</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#ec4899] inline-block border-dashed" />VWAP</span>
+        </div>
       </div>
       {loading ? (
         <div className="flex items-center justify-center h-[400px] text-gray-500">
