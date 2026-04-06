@@ -21,8 +21,8 @@ interface PositionOverlay {
 // Module-level: persist shared timeframe and indicator visibility across navigations
 let savedBarSize = "5 mins";
 
-export type IndicatorVisibility = { ema9: boolean; ema21: boolean; ema50: boolean; vwap: boolean };
-const defaultVis: IndicatorVisibility = { ema9: true, ema21: true, ema50: true, vwap: true };
+export type IndicatorVisibility = { ema9: boolean; ema21: boolean; ema50: boolean; ema200: boolean; vwap: boolean };
+const defaultVis: IndicatorVisibility = { ema9: true, ema21: true, ema50: true, ema200: false, vwap: true };
 const savedIndicatorVis: Record<string, IndicatorVisibility> = {};
 
 function SymbolChart({
@@ -184,6 +184,7 @@ export default function DualChartLayout() {
             { key: "ema9" as const, label: "EMA9", color: "#f59e0b" },
             { key: "ema21" as const, label: "EMA21", color: "#3b82f6" },
             { key: "ema50" as const, label: "EMA50", color: "#8b5cf6" },
+            { key: "ema200" as const, label: "EMA200", color: "#ef4444" },
             { key: "vwap" as const, label: "VWAP", color: "#ec4899" },
           ]).map((ind) => (
             <button

@@ -88,7 +88,7 @@ interface TradingChartProps {
   syncRange?: { from: number; to: number } | null;
   onRangeChange?: (range: { from: number; to: number }) => void;
   showIndicators?: boolean;
-  indicatorVis?: { ema9: boolean; ema21: boolean; ema50: boolean; vwap: boolean };
+  indicatorVis?: { ema9: boolean; ema21: boolean; ema50: boolean; ema200: boolean; vwap: boolean };
 }
 
 export interface TradingChartHandle {
@@ -108,7 +108,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   syncRange,
   onRangeChange,
   showIndicators = true,
-  indicatorVis = { ema9: true, ema21: true, ema50: true, vwap: true },
+  indicatorVis = { ema9: true, ema21: true, ema50: true, ema200: false, vwap: true },
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -118,6 +118,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   const ema9Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema21Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema200Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersRef = useRef<any>(null);
@@ -201,6 +202,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     let ema9Series: ISeriesApi<"Line"> | null = null;
     let ema21Series: ISeriesApi<"Line"> | null = null;
     let ema50Series: ISeriesApi<"Line"> | null = null;
+    let ema200Series: ISeriesApi<"Line"> | null = null;
     let vwapSeries: ISeriesApi<"Line"> | null = null;
     if (showIndicators) {
       ema9Series = chart.addSeries(LineSeries, {
@@ -211,6 +213,9 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       });
       ema50Series = chart.addSeries(LineSeries, {
         color: "#8b5cf6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
+      });
+      ema200Series = chart.addSeries(LineSeries, {
+        color: "#ef4444", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
       });
       vwapSeries = chart.addSeries(LineSeries, {
         color: "#ec4899", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
@@ -224,6 +229,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     ema9Ref.current = ema9Series;
     ema21Ref.current = ema21Series;
     ema50Ref.current = ema50Series;
+    ema200Ref.current = ema200Series;
     vwapRef.current = vwapSeries;
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
@@ -270,6 +276,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       ema9Ref.current = null;
       ema21Ref.current = null;
       ema50Ref.current = null;
+      ema200Ref.current = null;
       vwapRef.current = null;
       markersRef.current = null;
       priceLinesRef.current = [];
@@ -324,6 +331,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
         if (ema9Ref.current) ema9Ref.current.setData(indicatorVis.ema9 ? toLineData(computeEMA(candles, 9)) : empty);
         if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 ? toLineData(computeEMA(candles, 21)) : empty);
         if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 ? toLineData(computeEMA(candles, 50)) : empty);
+        if (ema200Ref.current) ema200Ref.current.setData(indicatorVis.ema200 ? toLineData(computeEMA(candles, 200)) : empty);
         if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap ? toLineData(computeVWAP(candles)) : empty);
       }
 
@@ -364,6 +372,7 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     if (ema9Ref.current) ema9Ref.current.setData(indicatorVis.ema9 && candles.length > 9 ? toLineData(computeEMA(candles, 9)) : empty);
     if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 && candles.length > 21 ? toLineData(computeEMA(candles, 21)) : empty);
     if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 && candles.length > 50 ? toLineData(computeEMA(candles, 50)) : empty);
+    if (ema200Ref.current) ema200Ref.current.setData(indicatorVis.ema200 && candles.length > 200 ? toLineData(computeEMA(candles, 200)) : empty);
     if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap && candles.length > 0 ? toLineData(computeVWAP(candles)) : empty);
   }, [indicatorVis, showIndicators]);
 
