@@ -52,7 +52,7 @@ export default function SignalFeed() {
         )}
       </div>
       {signals.length === 0 ? (
-        <div className="text-xs text-gray-600">No signals yet — algo engine not running</div>
+        <div className="text-xs text-gray-600">No signals</div>
       ) : (
         <div className="space-y-2">
           {signals.map((sig, idx) => (
