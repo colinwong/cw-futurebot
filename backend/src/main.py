@@ -486,7 +486,11 @@ async def _strategy_evaluation_loop():
                                     actual_action = "DEFER"
                                     actual_reasoning = "Signal-only mode"
 
-                                # Persist signal + decision
+                                # Skip rejected signals (noise — same signal fires every cycle while position is open)
+                                if actual_action == "REJECT":
+                                    continue
+
+                                # Persist signal + decision (only EXECUTE and DEFER)
                                 sig_record = Signal(
                                     snapshot_id=snapshot.id,
                                     strategy_name=signal.strategy_name,
@@ -508,7 +512,7 @@ async def _strategy_evaluation_loop():
                                 )
                                 session.add(dec_record)
 
-                                # Broadcast signal with ACTUAL decision to UI
+                                # Broadcast signal to UI
                                 await manager.broadcast("signal", {
                                     "id": f"live-{int(_time.time() * 1000)}",
                                     "timestamp": _datetime.now(_tz.utc).isoformat(),
