@@ -52,19 +52,41 @@ function computeEMA(candles: Candle[], period: number): { time: number; value: n
 }
 
 // Simple VWAP from candle data
-function computeVWAP(candles: Candle[]): { time: number; value: number }[] {
+interface VWAPResult {
+  vwap: { time: number; value: number }[];
+  sd1Upper: { time: number; value: number }[];
+  sd1Lower: { time: number; value: number }[];
+  sd2Upper: { time: number; value: number }[];
+  sd2Lower: { time: number; value: number }[];
+}
+
+function computeVWAP(candles: Candle[]): VWAPResult {
   let cumVol = 0;
   let cumTPVol = 0;
-  const result: { time: number; value: number }[] = [];
+  let cumTP2Vol = 0; // for variance calculation
+  const vwap: { time: number; value: number }[] = [];
+  const sd1Upper: { time: number; value: number }[] = [];
+  const sd1Lower: { time: number; value: number }[] = [];
+  const sd2Upper: { time: number; value: number }[] = [];
+  const sd2Lower: { time: number; value: number }[] = [];
+
   for (const c of candles) {
     const tp = (c.high + c.low + c.close) / 3;
     cumVol += c.volume;
     cumTPVol += tp * c.volume;
+    cumTP2Vol += tp * tp * c.volume;
     if (cumVol > 0) {
-      result.push({ time: c.time, value: cumTPVol / cumVol });
+      const v = cumTPVol / cumVol;
+      const variance = Math.max(0, cumTP2Vol / cumVol - v * v);
+      const sd = Math.sqrt(variance);
+      vwap.push({ time: c.time, value: v });
+      sd1Upper.push({ time: c.time, value: v + sd });
+      sd1Lower.push({ time: c.time, value: v - sd });
+      sd2Upper.push({ time: c.time, value: v + 2 * sd });
+      sd2Lower.push({ time: c.time, value: v - 2 * sd });
     }
   }
-  return result;
+  return { vwap, sd1Upper, sd1Lower, sd2Upper, sd2Lower };
 }
 
 interface TradingChartProps {
@@ -120,6 +142,10 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
   const ema50Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema200Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapSd1UpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapSd1LowerRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapSd2UpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapSd2LowerRef = useRef<ISeriesApi<"Line"> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -204,6 +230,10 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     let ema50Series: ISeriesApi<"Line"> | null = null;
     let ema200Series: ISeriesApi<"Line"> | null = null;
     let vwapSeries: ISeriesApi<"Line"> | null = null;
+    let vwapSd1Upper: ISeriesApi<"Line"> | null = null;
+    let vwapSd1Lower: ISeriesApi<"Line"> | null = null;
+    let vwapSd2Upper: ISeriesApi<"Line"> | null = null;
+    let vwapSd2Lower: ISeriesApi<"Line"> | null = null;
     if (showIndicators) {
       ema9Series = chart.addSeries(LineSeries, {
         color: "#f59e0b", lineWidth: 1, lastValueVisible: false, priceLineVisible: false,
@@ -220,6 +250,18 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       vwapSeries = chart.addSeries(LineSeries, {
         color: "#ec4899", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
       });
+      vwapSd1Upper = chart.addSeries(LineSeries, {
+        color: "rgba(236, 72, 153, 0.3)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
+      });
+      vwapSd1Lower = chart.addSeries(LineSeries, {
+        color: "rgba(236, 72, 153, 0.3)", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false,
+      });
+      vwapSd2Upper = chart.addSeries(LineSeries, {
+        color: "rgba(236, 72, 153, 0.15)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
+      });
+      vwapSd2Lower = chart.addSeries(LineSeries, {
+        color: "rgba(236, 72, 153, 0.15)", lineWidth: 1, lineStyle: 3, lastValueVisible: false, priceLineVisible: false,
+      });
     }
 
     chartRef.current = chart;
@@ -231,6 +273,10 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     ema50Ref.current = ema50Series;
     ema200Ref.current = ema200Series;
     vwapRef.current = vwapSeries;
+    vwapSd1UpperRef.current = vwapSd1Upper;
+    vwapSd1LowerRef.current = vwapSd1Lower;
+    vwapSd2UpperRef.current = vwapSd2Upper;
+    vwapSd2LowerRef.current = vwapSd2Lower;
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
     // Sync: notify parent when user scrolls/zooms (not during programmatic changes)
@@ -278,6 +324,10 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
       ema50Ref.current = null;
       ema200Ref.current = null;
       vwapRef.current = null;
+      vwapSd1UpperRef.current = null;
+      vwapSd1LowerRef.current = null;
+      vwapSd2UpperRef.current = null;
+      vwapSd2LowerRef.current = null;
       markersRef.current = null;
       priceLinesRef.current = [];
       initialLoadDone.current = false;
@@ -333,7 +383,14 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
         if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 ? toLineData(computeEMA(candles, 21)) : empty);
         if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 ? toLineData(computeEMA(candles, 50)) : empty);
         if (ema200Ref.current) ema200Ref.current.setData(indicatorVis.ema200 ? toLineData(computeEMA(candles, 200)) : empty);
-        if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap ? toLineData(computeVWAP(candles)) : empty);
+        if (vwapRef.current || vwapSd1UpperRef.current) {
+          const vwapData = indicatorVis.vwap ? computeVWAP(candles) : null;
+          if (vwapRef.current) vwapRef.current.setData(vwapData ? toLineData(vwapData.vwap) : empty);
+          if (vwapSd1UpperRef.current) vwapSd1UpperRef.current.setData(vwapData ? toLineData(vwapData.sd1Upper) : empty);
+          if (vwapSd1LowerRef.current) vwapSd1LowerRef.current.setData(vwapData ? toLineData(vwapData.sd1Lower) : empty);
+          if (vwapSd2UpperRef.current) vwapSd2UpperRef.current.setData(vwapData ? toLineData(vwapData.sd2Upper) : empty);
+          if (vwapSd2LowerRef.current) vwapSd2LowerRef.current.setData(vwapData ? toLineData(vwapData.sd2Lower) : empty);
+        }
       }
 
       const saved = viewKey ? savedVisibleBars[viewKey] : undefined;
@@ -379,7 +436,14 @@ const TradingChart = forwardRef<TradingChartHandle, TradingChartProps>(function 
     if (ema21Ref.current) ema21Ref.current.setData(indicatorVis.ema21 && candles.length > 21 ? toLineData(computeEMA(candles, 21)) : empty);
     if (ema50Ref.current) ema50Ref.current.setData(indicatorVis.ema50 && candles.length > 50 ? toLineData(computeEMA(candles, 50)) : empty);
     if (ema200Ref.current) ema200Ref.current.setData(indicatorVis.ema200 && candles.length > 200 ? toLineData(computeEMA(candles, 200)) : empty);
-    if (vwapRef.current) vwapRef.current.setData(indicatorVis.vwap && candles.length > 0 ? toLineData(computeVWAP(candles)) : empty);
+    if (vwapRef.current || vwapSd1UpperRef.current) {
+      const vwapData = indicatorVis.vwap && candles.length > 0 ? computeVWAP(candles) : null;
+      if (vwapRef.current) vwapRef.current.setData(vwapData ? toLineData(vwapData.vwap) : empty);
+      if (vwapSd1UpperRef.current) vwapSd1UpperRef.current.setData(vwapData ? toLineData(vwapData.sd1Upper) : empty);
+      if (vwapSd1LowerRef.current) vwapSd1LowerRef.current.setData(vwapData ? toLineData(vwapData.sd1Lower) : empty);
+      if (vwapSd2UpperRef.current) vwapSd2UpperRef.current.setData(vwapData ? toLineData(vwapData.sd2Upper) : empty);
+      if (vwapSd2LowerRef.current) vwapSd2LowerRef.current.setData(vwapData ? toLineData(vwapData.sd2Lower) : empty);
+    }
   }, [indicatorVis, showIndicators, candles]);
 
   // Update markers
