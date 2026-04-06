@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import random
 import concurrent.futures
 from contextlib import asynccontextmanager
 from typing import Callable, TypeVar
@@ -82,40 +81,41 @@ async def run_ib(fn: Callable[..., T], *args, timeout: float = 15.0, **kwargs) -
 
 _broker_ref: IBBroker | None = None
 _engine_running = False
-_loops_started = False
+
+# Track IB positions not yet in DB — only create after 2 consecutive detections
+_unconfirmed_ib_positions: dict[str, int] = {}
 
 
-_current_client_id = random.randint(10, 999)
-
-
-async def _connect_ib(force_new_client_id: bool = False) -> bool:
-    """Connect to IB Gateway and return True on success."""
-    global ib, _current_client_id
-    if force_new_client_id:
-        _current_client_id = random.randint(10, 999)
-        logger.info("Using new clientId %d to avoid stale session conflict", _current_client_id)
-    try:
+async def _connect_ib() -> bool:
+    """Connect to IB Gateway using fixed clientId. Reuses same IB() instance."""
+    global ib
+    if ib is None:
         ib = IB()
+    elif ib.isConnected():
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+    try:
         await run_ib(
             ib.connect,
             host=settings.ib_host,
             port=settings.ib_port,
-            clientId=_current_client_id,
+            clientId=settings.ib_client_id,
             readonly=False,
             timeout=30.0,
         )
-        logger.info("Connected to IB Gateway at %s:%d (clientId=%d)", settings.ib_host, settings.ib_port, _current_client_id)
+        logger.info("Connected to IB Gateway at %s:%d (clientId=%d)", settings.ib_host, settings.ib_port, settings.ib_client_id)
         return True
     except Exception as e:
         logger.warning("Could not connect to IB Gateway: %s", e)
-        ib = None
         return False
 
 
 async def _post_connect_setup():
     """Set up everything that depends on a live IB connection.
     Called at startup and after every reconnect."""
-    global _broker_ref, _loops_started
+    global _broker_ref
 
     # Enable delayed data if no real-time subscription
     await run_ib(ib.reqMarketDataType, 4)
@@ -125,22 +125,14 @@ async def _post_connect_setup():
         _broker_ref = IBBroker(ib_instance=ib, executor=_ib_executor)
         orders.set_broker(_broker_ref)
     else:
-        _broker_ref._ib = ib  # Swap to new IB instance
+        _broker_ref._ib = ib
     logger.info("Broker wired to orders API")
 
-    # Register fill tracking callback on this IB instance
+    # Clear old event handlers before registering new ones (prevents callback leak)
     _setup_fill_tracking(asyncio.get_event_loop())
 
     # Reconciliation — always run on connect/reconnect
     await _startup_reconciliation()
-
-    # Only start long-running loops once — they survive reconnects
-    if not _loops_started:
-        asyncio.create_task(_strategy_evaluation_loop())
-        asyncio.create_task(_start_market_data_streaming())
-        asyncio.create_task(_periodic_reconciliation_loop())
-        asyncio.create_task(_ib_connection_monitor())
-        _loops_started = True
 
     # Broadcast reconnect event to UI
     await manager.broadcast("system", {"event": "ib_connected"})
@@ -148,17 +140,14 @@ async def _post_connect_setup():
 
 async def _reconnect_ib():
     """Reconnect to IB Gateway after a disconnect."""
-    global ib
-    # Force-disconnect old instance without going through thread pool (may be hung)
+    # disconnect() on the reused instance, then reconnect with same clientId
     if ib is not None:
         try:
             ib.disconnect()
         except Exception:
             pass
-        ib = None
 
-    # Use a new clientId to avoid "client id already in use" from stale sessions
-    if await _connect_ib(force_new_client_id=True):
+    if await _connect_ib():
         await _post_connect_setup()
         return True
     return False
@@ -186,12 +175,15 @@ async def lifespan(app: FastAPI):
     global ib
     logger.info("Starting cw-futurebot backend on port %d", settings.port)
 
-    # Initial IB connection — _post_connect_setup starts all background loops
+    # Initial IB connection
     if await _connect_ib():
         await _post_connect_setup()
-    else:
-        # IB not available yet — start connection monitor so it can reconnect later
-        asyncio.create_task(_ib_connection_monitor())
+
+    # Start ALL background loops here (once per process lifetime)
+    asyncio.create_task(_strategy_evaluation_loop())
+    asyncio.create_task(_start_market_data_streaming())
+    asyncio.create_task(_periodic_reconciliation_loop())
+    asyncio.create_task(_ib_connection_monitor())
 
     # Start news provider + analyzer
     global _news_provider, _news_analyzer
@@ -312,26 +304,36 @@ async def _startup_reconciliation():
                 db_pos.exit_timestamp = _datetime.now(_tz.utc)
                 closed_symbols.add(symbol)
 
-        # Check: IB has position but DB doesn't — create a Position so UI can manage it
+        # Check: IB has position but DB doesn't — defer creation to avoid race with fill processing
         for symbol, ib_info in ib_pos_map.items():
-            # Skip if we just closed this symbol's DB position in the same cycle
-            # (avoids re-creating a position from stale IB data)
             if symbol in closed_symbols:
-                discrepancies.append(f"IB reports {symbol} but DB position was just closed — skipping creation (will re-check next cycle)")
+                _unconfirmed_ib_positions.pop(symbol, None)
                 continue
             if symbol not in db_positions:
-                from src.db.models import DirectionEnum as _Dir, SymbolEnum as _Sym
-                direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
-                new_pos = Position(
-                    symbol=_Sym(symbol),
-                    direction=_Dir(direction),
-                    quantity=abs(ib_info["qty"]),
-                    entry_price=ib_info["avg_price"],
-                    entry_timestamp=_datetime.now(_tz.utc),
-                    is_open=True,
-                )
-                session.add(new_pos)
-                discrepancies.append(f"IB has {direction} {symbol} x{abs(ib_info['qty'])} @ {ib_info['avg_price']:.2f} — created Position in DB for management")
+                cycle_count = _unconfirmed_ib_positions.get(symbol, 0) + 1
+                _unconfirmed_ib_positions[symbol] = cycle_count
+                if cycle_count < 2:
+                    discrepancies.append(
+                        f"IB has {symbol} but not in DB — deferring creation (cycle {cycle_count}/2, may be pending fill)"
+                    )
+                else:
+                    # Confirmed orphan after 2 consecutive detections
+                    direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
+                    new_pos = Position(
+                        symbol=SymbolEnum(symbol),
+                        direction=DirectionEnum(direction),
+                        quantity=abs(ib_info["qty"]),
+                        entry_price=ib_info["avg_price"],
+                        entry_timestamp=_datetime.now(_tz.utc),
+                        is_open=True,
+                    )
+                    session.add(new_pos)
+                    _unconfirmed_ib_positions.pop(symbol, None)
+                    discrepancies.append(
+                        f"IB has {direction} {symbol} x{abs(ib_info['qty'])} @ {ib_info['avg_price']:.2f} — created Position (confirmed after 2 cycles)"
+                    )
+            else:
+                _unconfirmed_ib_positions.pop(symbol, None)
 
         # Check: DB and IB both have a position but disagree on quantity/direction
         for symbol, ib_info in ib_pos_map.items():
@@ -694,6 +696,9 @@ def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
     if not ib:
         return
 
+    # Clear old handlers to prevent callback accumulation on reconnect
+    ib.orderStatusEvent.clear()
+
     from src.db.models import DirectionEnum as _Dir, TradeOutcome
     from src.contracts import FUTURES_CONTRACTS
 
@@ -844,8 +849,9 @@ _CANDLE_INTERVAL = 5  # seconds — build 5-second candles from ticks
 
 async def _start_market_data_streaming():
     """Subscribe to IB tick data for ES/NQ, build candles, and broadcast via WebSocket."""
-    if not ib:
-        return
+    # Wait for IB connection (started from lifespan before connect may succeed)
+    while not ib or not ib.isConnected():
+        await asyncio.sleep(2)
 
     main_loop = asyncio.get_event_loop()
 

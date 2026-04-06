@@ -1,7 +1,7 @@
 import asyncio
 import concurrent.futures
 import logging
-import time
+import uuid
 from typing import Callable
 
 from ib_insync import IB, LimitOrder, MarketOrder, StopOrder, Trade
@@ -188,8 +188,8 @@ class IBBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> BracketOrderResult:
-        """Place entry + OCA stop/target. OCA orders survive client disconnects
-        (unlike parent-child brackets which IB cancels when the client drops)."""
+        """Place entry, wait for confirmed fill, then place OCA stop/target.
+        OCA orders survive client disconnects (unlike parent-child brackets)."""
 
         def _place():
             contract = make_ib_contract(symbol)
@@ -205,14 +205,22 @@ class IBBroker(BaseBroker):
                 entry_order = LimitOrder(entry_side, quantity, entry_price)
             entry_trade = self._ib.placeOrder(contract, entry_order)
 
-            # Wait for entry fill before placing OCA exits
-            for _ in range(50):  # up to 5 seconds
+            # 2. Wait for CONFIRMED fill (up to 30s — market orders fill instantly for liquid futures)
+            for _ in range(300):
                 self._ib.sleep(0.1)
                 if entry_trade.orderStatus.status == "Filled":
                     break
 
-            # 2. Place stop and target as independent OCA group
-            oca_group = f"futurebot_{symbol.value}_{int(time.time())}"
+            if entry_trade.orderStatus.status != "Filled":
+                # Entry didn't fill — cancel and abort
+                self._ib.cancelOrder(entry_trade.order)
+                self._ib.sleep(1)
+                raise RuntimeError(
+                    f"Entry order {entry_trade.order.orderId} did not fill within 30s — cancelled"
+                )
+
+            # 3. Entry confirmed filled — place OCA protective orders
+            oca_group = f"fb_{symbol.value}_{uuid.uuid4().hex[:12]}"
 
             target_order = LimitOrder(exit_side, quantity, target_price)
             target_order.ocaGroup = oca_group
@@ -260,7 +268,7 @@ class IBBroker(BaseBroker):
             self._ib.qualifyContracts(contract)
 
             exit_side = "SELL" if direction == DirectionEnum.LONG else "BUY"
-            oca_group = f"futurebot_{symbol.value}_{int(time.time())}"
+            oca_group = f"fb_{symbol.value}_{uuid.uuid4().hex[:12]}"
 
             target_order = LimitOrder(exit_side, quantity, target_price)
             target_order.ocaGroup = oca_group

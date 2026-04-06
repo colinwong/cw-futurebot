@@ -143,18 +143,24 @@ class DecisionEngine:
         session.add(decision)
         await session.flush()
 
-        # Place bracket order at broker
-        bracket_result = await self._broker.place_bracket_order(
-            symbol=strategy_signal.symbol,
-            direction=strategy_signal.direction,
-            quantity=quantity,
-            entry_order_type="MARKET",
-            entry_price=None,
-            stop_price=stop_price,
-            target_price=target_price,
-        )
+        # Place bracket order at broker (waits for confirmed entry fill)
+        try:
+            bracket_result = await self._broker.place_bracket_order(
+                symbol=strategy_signal.symbol,
+                direction=strategy_signal.direction,
+                quantity=quantity,
+                entry_order_type="MARKET",
+                entry_price=None,
+                stop_price=stop_price,
+                target_price=target_price,
+            )
+        except RuntimeError as e:
+            logger.error("Bracket order failed for %s: %s", strategy_signal.symbol.value, e)
+            decision.action = DecisionActionEnum.REJECT
+            decision.decision_reasoning = f"Entry order failed to fill: {e}"
+            return decision
 
-        # Persist the entry order
+        # Persist the entry order (already filled at IB)
         side = OrderSideEnum.BUY if strategy_signal.direction == DirectionEnum.LONG else OrderSideEnum.SELL
         entry_order = Order(
             decision_id=decision.id,
@@ -163,7 +169,7 @@ class DecisionEngine:
             order_type=OrderTypeEnum.MARKET,
             quantity=quantity,
             ib_order_id=bracket_result.entry_order_id,
-            status=OrderStatusEnum.SUBMITTED,
+            status=OrderStatusEnum.FILLED,
         )
         session.add(entry_order)
 
@@ -195,12 +201,12 @@ class DecisionEngine:
         session.add(target_order)
         await session.flush()
 
-        # Create position record
+        # Create position record — entry_price=0 until fill callback updates it
         position = Position(
             symbol=strategy_signal.symbol,
             direction=strategy_signal.direction,
             quantity=quantity,
-            entry_price=snapshot.price,
+            entry_price=0.0,
             entry_timestamp=datetime.now(timezone.utc),
             entry_decision_id=decision.id,
             is_open=True,
