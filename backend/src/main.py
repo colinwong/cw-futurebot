@@ -656,6 +656,7 @@ def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
 
 # Track current candle per symbol for tick-based candle building
 _current_candles: dict[str, dict] = {}
+_prev_volume: dict[str, int] = {}  # Track previous cumulative volume per symbol for delta computation
 _CANDLE_INTERVAL = 5  # seconds — build 5-second candles from ticks
 
 
@@ -684,15 +685,19 @@ async def _start_market_data_streaming():
                     candle_time = int(now // _CANDLE_INTERVAL) * _CANDLE_INTERVAL
                     sym = s.value
 
+                    # Compute volume delta (IB sends cumulative session volume)
+                    raw_vol = int(t.volume) if t.volume == t.volume else 0
+                    prev_vol = _prev_volume.get(sym, 0)
+                    vol_delta = max(0, raw_vol - prev_vol) if prev_vol > 0 else 0
+                    _prev_volume[sym] = raw_vol
+
                     # Build/update the current candle
                     cur = _current_candles.get(sym)
                     if cur is None or cur["time"] != candle_time:
-                        # Emit the previous candle if it exists
                         if cur is not None:
                             asyncio.run_coroutine_threadsafe(
                                 manager.broadcast("candle", cur), main_loop
                             )
-                        # Start new candle
                         _current_candles[sym] = {
                             "symbol": sym,
                             "time": candle_time,
@@ -700,12 +705,13 @@ async def _start_market_data_streaming():
                             "high": price,
                             "low": price,
                             "close": price,
-                            "volume": int(t.volume) if t.volume == t.volume else 0,
+                            "volume": vol_delta,
                         }
                     else:
                         cur["high"] = max(cur["high"], price)
                         cur["low"] = min(cur["low"], price)
                         cur["close"] = price
+                        cur["volume"] += vol_delta
 
                     # Always broadcast tick for live price display
                     tick_data = {
@@ -713,7 +719,7 @@ async def _start_market_data_streaming():
                         "price": price,
                         "bid": t.bid if t.bid == t.bid else 0,
                         "ask": t.ask if t.ask == t.ask else 0,
-                        "volume": int(t.volume) if t.volume == t.volume else 0,
+                        "volume": vol_delta,
                         "timestamp": int(now),
                     }
                     asyncio.run_coroutine_threadsafe(

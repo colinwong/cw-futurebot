@@ -106,6 +106,7 @@ export function useMarketData(symbol: Symbol, barSize = "5 mins", duration = "1 
 
         let updated: Candle[];
         if (last && last.time === barTime) {
+          // Update existing bar — add incremental volume delta
           updated = [
             ...prev.slice(0, -1),
             {
