@@ -19,6 +19,11 @@ const TRADING_MODE_OPTIONS = [
   { value: "live", label: "Live Trading (auto-execute signals)" },
 ];
 
+const RISK_MODE_OPTIONS = [
+  { value: "manual", label: "Manual (fixed values)" },
+  { value: "auto", label: "Auto (% of account balance)" },
+];
+
 const MODEL_OPTIONS = [
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (fast/cheap)" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6 (accurate/costly)" },
@@ -129,6 +134,20 @@ export default function SettingsPage() {
       );
     }
 
+    if (key === "risk_mode") {
+      return (
+        <select
+          value={values[key]}
+          onChange={(e) => updateValue(key, e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
+        >
+          {RISK_MODE_OPTIONS.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
+      );
+    }
+
     if (key === "trading_mode") {
       return (
         <select
@@ -219,9 +238,20 @@ export default function SettingsPage() {
 
       {/* Trading Parameters */}
       <div className="bg-gray-900 rounded p-4 mb-4">
-        <h2 className="text-sm font-bold mb-3">Trading Parameters</h2>
-        {renderSettingRow("max_position_size")}
-        {renderSettingRow("daily_loss_limit")}
+        <h2 className="text-sm font-bold mb-3">Risk Management</h2>
+        {renderSettingRow("risk_mode")}
+        {values.risk_mode !== "auto" && (
+          <>
+            {renderSettingRow("max_position_size")}
+            {renderSettingRow("daily_loss_limit")}
+          </>
+        )}
+        {values.risk_mode === "auto" && (
+          <>
+            {renderSettingRow("auto_max_position_pct")}
+            {renderSettingRow("auto_daily_loss_pct")}
+          </>
+        )}
         {renderSettingRow("default_stop_ticks")}
         {renderSettingRow("default_target_ticks")}
       </div>

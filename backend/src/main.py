@@ -858,6 +858,54 @@ async def engine_status():
     return {"running": _engine_running}
 
 
+@app.get("/api/risk/effective")
+async def get_effective_risk():
+    """Get the effective risk limits (auto-calculated or manual)."""
+    from src.db.models import AppSetting
+    async with async_session() as session:
+        result = await session.execute(_select(AppSetting))
+        db_settings = {s.key: s.value for s in result.scalars().all()}
+
+    risk_mode = db_settings.get("risk_mode", "manual")
+
+    if risk_mode == "auto" and ib and ib.isConnected():
+        try:
+            summary = await run_ib(ib.accountSummary)
+            values = {}
+            for item in summary:
+                values[item.tag] = item.value
+            balance = float(values.get("NetLiquidation", 0))
+            buying_power = float(values.get("BuyingPower", 0))
+
+            max_pct = float(db_settings.get("auto_max_position_pct", "40"))
+            loss_pct = float(db_settings.get("auto_daily_loss_pct", "2.5"))
+
+            # MES margin ~$1,500 per contract
+            margin_per_contract = 1500
+            usable_margin = buying_power * (max_pct / 100)
+            auto_max_position = max(1, int(usable_margin / margin_per_contract))
+            auto_daily_loss = round(balance * (loss_pct / 100), 2)
+
+            return {
+                "mode": "auto",
+                "max_position_size": auto_max_position,
+                "daily_loss_limit": auto_daily_loss,
+                "balance": balance,
+                "buying_power": buying_power,
+                "auto_max_position_pct": max_pct,
+                "auto_daily_loss_pct": loss_pct,
+            }
+        except Exception:
+            pass
+
+    # Manual mode or auto failed
+    return {
+        "mode": "manual",
+        "max_position_size": int(db_settings.get("max_position_size", str(settings.max_position_size))),
+        "daily_loss_limit": float(db_settings.get("daily_loss_limit", str(settings.daily_loss_limit))),
+    }
+
+
 @app.get("/api/status")
 async def status():
     ib_connected = ib is not None and ib.isConnected()
