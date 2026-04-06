@@ -4,36 +4,54 @@
  * Never shows raw JSON braces/brackets.
  */
 export function formatEventData(d: Record<string, unknown>): string {
-  // Known patterns
+  // Order fill event (from fill callback)
+  if (d.action === "filled" && d.ib_order_id) {
+    const price = d.fill_price ? ` @ ${(d.fill_price as number).toFixed(2)}` : "";
+    return `${d.side || ""} ${d.symbol || ""} filled${price} x${d.quantity || ""}`.trim();
+  }
+  // Close order submitted
+  if (d.action === "close_submitted") {
+    return `Close order submitted for ${d.symbol || ""}`;
+  }
+  // Order with status
   if (d.status && d.ib_order_id) {
     const price = d.fill_price ? ` @ ${(d.fill_price as number).toFixed(2)}` : "";
     return `Order #${d.ib_order_id} ${d.status}${price}${d.quantity ? ` x${d.quantity}` : ""}`;
   }
+  // New bracket order
+  if (d.action === "new_bracket") {
+    return "New bracket order placed";
+  }
+  // Position update
   if (d.action === "updated" || d.action === "new") {
     return `Position ${d.action}${d.position_id ? ` #${d.position_id}` : ""}`;
   }
+  // Position with direction
   if (d.direction && d.symbol) {
     const price = d.entry_price ? ` @ ${(d.entry_price as number).toFixed(2)}` : "";
     return `${d.direction} ${d.symbol} x${d.quantity || 1}${price}`;
   }
+  // System event type
   if (d.event_type) {
     return `${d.event_type}${d.details ? `: ${summarizeValue(d.details)}` : ""}`;
   }
+  // Named event
   if (d.event) {
     return String(d.event).replace(/_/g, " ");
   }
+  // Message field
   if (d.message) {
     return String(d.message);
   }
 
-  // Generic: convert to key=value pairs, skip nulls and internal fields
+  // Generic fallback — readable key: value pairs
   const parts: string[] = [];
   for (const [k, v] of Object.entries(d)) {
     if (v === null || v === undefined || k === "type") continue;
-    parts.push(`${k}=${summarizeValue(v)}`);
-    if (parts.length >= 4) break;
+    parts.push(`${k}: ${summarizeValue(v)}`);
+    if (parts.length >= 3) break;
   }
-  return parts.join(", ") || "—";
+  return parts.join(" · ") || "—";
 }
 
 /**

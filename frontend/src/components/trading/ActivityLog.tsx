@@ -99,12 +99,12 @@ export default function ActivityLog() {
         <div className="space-y-1.5">
           {entries.map((e) => (
             <div key={e.id} className="text-xs border-b border-gray-800 pb-1">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <span className="text-gray-500 shrink-0">{e.time}</span>
                 <span className={`px-1 py-0.5 rounded text-xs ${e.typeColor}`}>
                   {e.typeLabel}
                 </span>
-                <span className={e.msgColor}>{cleanJsonString(e.message)}</span>
+                <span className={`${e.msgColor} truncate`}>{cleanJsonString(e.message)}</span>
               </div>
             </div>
           ))}
