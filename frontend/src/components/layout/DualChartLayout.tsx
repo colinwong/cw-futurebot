@@ -36,7 +36,8 @@ function loadSavedVis(): Record<string, IndicatorVisibility> {
 function persistVis(vis: Record<string, IndicatorVisibility>) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(vis)); } catch {}
 }
-const savedIndicatorVis: Record<string, IndicatorVisibility> = loadSavedVis();
+let savedIndicatorVis: Record<string, IndicatorVisibility> = {};
+let _visLoaded = false;
 
 function SymbolChart({
   symbol,
@@ -130,10 +131,18 @@ function SymbolChart({
 export default function DualChartLayout() {
   const [positions, setPositions] = useState<PositionOverlay[]>([]);
   const [barSize, setBarSize] = useState(savedBarSize);
-  const [indicatorVis, setIndicatorVis] = useState<IndicatorVisibility>(
-    savedIndicatorVis[savedBarSize] || { ...defaultVis }
-  );
+  const [indicatorVis, setIndicatorVis] = useState<IndicatorVisibility>({ ...defaultVis });
   const { subscribe } = useWebSocket();
+
+  // Load saved indicator visibility from localStorage after hydration
+  useEffect(() => {
+    if (!_visLoaded) {
+      savedIndicatorVis = loadSavedVis();
+      _visLoaded = true;
+    }
+    const saved = savedIndicatorVis[barSize];
+    if (saved) setIndicatorVis(saved);
+  }, []);
   const esChartRef = useRef<TradingChartHandle>(null);
   const nqChartRef = useRef<TradingChartHandle>(null);
 

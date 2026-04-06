@@ -38,8 +38,8 @@ export default function SignalFeed() {
         <div className="text-xs text-gray-600">No signals yet — algo engine not running</div>
       ) : (
         <div className="space-y-2">
-          {signals.map((sig) => (
-            <div key={sig.id} className="text-xs border-b border-gray-800 pb-1.5">
+          {signals.map((sig, idx) => (
+            <div key={sig.id || `sig-${idx}`} className="text-xs border-b border-gray-800 pb-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">
                   {formatTime(sig.timestamp)}
