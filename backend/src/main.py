@@ -321,19 +321,57 @@ async def _startup_reconciliation():
                 else:
                     # Confirmed orphan after 2 consecutive detections
                     direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
+                    sym_enum = SymbolEnum(symbol)
+                    dir_enum = DirectionEnum(direction)
+                    qty = abs(ib_info["qty"])
+                    entry = ib_info["avg_price"]
+
+                    # Calculate default stop/target
+                    spec = FUTURES_CONTRACTS.get(sym_enum, {})
+                    tick_size = spec.get("tick_size", 0.25)
+                    stop_ticks = settings.default_stop_ticks
+                    target_ticks = settings.default_target_ticks
+                    if direction == "LONG":
+                        stop_px = entry - stop_ticks * tick_size
+                        target_px = entry + target_ticks * tick_size
+                    else:
+                        stop_px = entry + stop_ticks * tick_size
+                        target_px = entry - target_ticks * tick_size
+
                     new_pos = Position(
-                        symbol=SymbolEnum(symbol),
-                        direction=DirectionEnum(direction),
-                        quantity=abs(ib_info["qty"]),
-                        entry_price=ib_info["avg_price"],
+                        symbol=sym_enum,
+                        direction=dir_enum,
+                        quantity=qty,
+                        entry_price=entry,
                         entry_timestamp=_datetime.now(_tz.utc),
                         is_open=True,
                     )
                     session.add(new_pos)
+                    await session.flush()
+
+                    # Place protective OCA orders at IB
+                    try:
+                        if _broker_ref:
+                            target_id, stop_id = await _broker_ref.place_oca_protective_orders(
+                                sym_enum, dir_enum, qty, stop_px, target_px
+                            )
+                            from src.db.models import Order as _Ord, ProtectiveOrder as _PO, OrderSideEnum, OrderTypeEnum, OrderStatusEnum, ProtectiveOrderStatusEnum
+                            exit_side = OrderSideEnum.SELL if direction == "LONG" else OrderSideEnum.BUY
+                            stop_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=OrderTypeEnum.STOP, quantity=qty, stop_price=stop_px, ib_order_id=stop_id, status=OrderStatusEnum.SUBMITTED)
+                            target_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=OrderTypeEnum.LIMIT, quantity=qty, limit_price=target_px, ib_order_id=target_id, status=OrderStatusEnum.SUBMITTED)
+                            session.add_all([stop_ord, target_ord])
+                            await session.flush()
+                            prot = _PO(position_id=new_pos.id, stop_order_id=stop_ord.id, target_order_id=target_ord.id, stop_ib_order_id=stop_id, target_ib_order_id=target_id, verified_at=_datetime.now(_tz.utc))
+                            session.add(prot)
+                            discrepancies.append(
+                                f"IB has {direction} {symbol} x{qty} @ {entry:.2f} — created Position + protective orders (stop={stop_px:.2f}, target={target_px:.2f})"
+                            )
+                    except Exception as e:
+                        discrepancies.append(
+                            f"IB has {direction} {symbol} x{qty} @ {entry:.2f} — created Position but FAILED to place protective orders: {e}"
+                        )
+
                     _unconfirmed_ib_positions.pop(symbol, None)
-                    discrepancies.append(
-                        f"IB has {direction} {symbol} x{abs(ib_info['qty'])} @ {ib_info['avg_price']:.2f} — created Position (confirmed after 2 cycles)"
-                    )
             else:
                 _unconfirmed_ib_positions.pop(symbol, None)
 
