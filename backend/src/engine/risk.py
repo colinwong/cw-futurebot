@@ -5,8 +5,11 @@ from datetime import datetime, timezone
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.broker.base import BaseBroker
 from src.config import EXCHANGE_TZ, UTC_TZ, settings
+from src.contracts import FUTURES_CONTRACTS
 from src.db.models import (
+    AppSetting,
     DirectionEnum,
     Position,
     SymbolEnum,
@@ -15,6 +18,14 @@ from src.db.models import (
 from src.strategy.base import StrategySignal
 
 logger = logging.getLogger(__name__)
+
+# Approximate intraday margin per contract by symbol
+_MARGIN_PER_CONTRACT = {
+    SymbolEnum.MES: 1_500,
+    SymbolEnum.MNQ: 1_500,
+    SymbolEnum.ES: 15_000,
+    SymbolEnum.NQ: 15_000,
+}
 
 
 @dataclass
@@ -60,6 +71,79 @@ class RiskManager:
     3. No duplicate positions (already in a position for that symbol/direction)
     4. Bracket order required (stop + target must be provided)
     """
+
+    def __init__(self, broker: BaseBroker | None = None):
+        self._broker = broker
+
+    async def _get_db_settings(self, session: AsyncSession) -> dict[str, str]:
+        """Read all app settings from the database."""
+        result = await session.execute(select(AppSetting))
+        return {s.key: s.value for s in result.scalars().all()}
+
+    async def _get_effective_max_position(
+        self, symbol: SymbolEnum, session: AsyncSession
+    ) -> int:
+        """Get effective max position size based on risk mode (auto or manual)."""
+        db_settings = await self._get_db_settings(session)
+        risk_mode = db_settings.get("risk_mode", "manual")
+
+        if risk_mode == "auto" and self._broker:
+            try:
+                account = await self._broker.get_account()
+                margin_per = _MARGIN_PER_CONTRACT.get(symbol, 1_500)
+                max_pct = float(db_settings.get("auto_max_position_pct", "40"))
+                usable_margin = account.buying_power * (max_pct / 100)
+                auto_max = max(1, int(usable_margin / margin_per))
+                logger.info(
+                    "Auto position sizing for %s: buying_power=%.0f, margin_per=%d, max_pct=%.1f%% → max=%d",
+                    symbol.value, account.buying_power, margin_per, max_pct, auto_max,
+                )
+                return auto_max
+            except Exception:
+                logger.warning("Auto position sizing failed, falling back to manual")
+
+        return int(db_settings.get("max_position_size", str(settings.max_position_size)))
+
+    async def _get_effective_daily_loss_limit(self, session: AsyncSession) -> float:
+        """Get effective daily loss limit based on risk mode."""
+        db_settings = await self._get_db_settings(session)
+        risk_mode = db_settings.get("risk_mode", "manual")
+
+        if risk_mode == "auto" and self._broker:
+            try:
+                account = await self._broker.get_account()
+                loss_pct = float(db_settings.get("auto_daily_loss_pct", "2.5"))
+                auto_limit = round(account.balance * (loss_pct / 100), 2)
+                return auto_limit
+            except Exception:
+                logger.warning("Auto daily loss calc failed, falling back to manual")
+
+        return float(db_settings.get("daily_loss_limit", str(settings.daily_loss_limit)))
+
+    async def calculate_position_size(
+        self, symbol: SymbolEnum, session: AsyncSession
+    ) -> int:
+        """Calculate how many contracts to trade, respecting max position limits."""
+        max_position = await self._get_effective_max_position(symbol, session)
+
+        # Get current open position size for this symbol
+        result = await session.execute(
+            select(func.sum(Position.quantity)).where(
+                Position.symbol == symbol, Position.is_open.is_(True)
+            )
+        )
+        current_size = result.scalar() or 0
+
+        # Available = max - current (at least 0)
+        available = max(0, max_position - current_size)
+        # For now, trade up to the available capacity (can refine with per-trade risk later)
+        quantity = max(1, available) if available > 0 else 0
+
+        logger.info(
+            "Position sizing for %s: max=%d, current=%d, quantity=%d",
+            symbol.value, max_position, current_size, quantity,
+        )
+        return quantity
 
     async def evaluate(
         self,
@@ -113,6 +197,8 @@ class RiskManager:
     async def _check_position_size(
         self, symbol: SymbolEnum, session: AsyncSession
     ) -> RiskCheckResult:
+        max_position = await self._get_effective_max_position(symbol, session)
+
         result = await session.execute(
             select(func.sum(Position.quantity)).where(
                 Position.symbol == symbol, Position.is_open.is_(True)
@@ -120,15 +206,15 @@ class RiskManager:
         )
         current_size = result.scalar() or 0
 
-        passed = current_size < settings.max_position_size
+        passed = current_size < max_position
         return RiskCheckResult(
             name="max_position_size",
             passed=passed,
-            threshold=settings.max_position_size,
+            threshold=max_position,
             actual=current_size,
-            message=f"Current {symbol.value} position size: {current_size}/{settings.max_position_size}"
+            message=f"Current {symbol.value} position size: {current_size}/{max_position}"
             if passed
-            else f"Max position size reached for {symbol.value}: {current_size}/{settings.max_position_size}",
+            else f"Max position size reached for {symbol.value}: {current_size}/{max_position}",
         )
 
     async def _check_duplicate_position(
@@ -161,6 +247,8 @@ class RiskManager:
         )
 
     async def _check_daily_loss(self, session: AsyncSession) -> RiskCheckResult:
+        daily_loss_limit = await self._get_effective_daily_loss_limit(session)
+
         # Reset at ET midnight (exchange timezone), convert to UTC for DB query
         today_start = (
             datetime.now(EXCHANGE_TZ)
@@ -179,13 +267,13 @@ class RiskManager:
         )
         daily_pnl = result.scalar() or 0.0
 
-        passed = daily_pnl > -settings.daily_loss_limit
+        passed = daily_pnl > -daily_loss_limit
         return RiskCheckResult(
             name="daily_loss_limit",
             passed=passed,
-            threshold=f"-${settings.daily_loss_limit:.2f}",
+            threshold=f"-${daily_loss_limit:.2f}",
             actual=f"${daily_pnl:.2f}",
-            message=f"Daily P&L: ${daily_pnl:.2f} (limit: -${settings.daily_loss_limit:.2f})"
+            message=f"Daily P&L: ${daily_pnl:.2f} (limit: -${daily_loss_limit:.2f})"
             if passed
-            else f"Daily loss limit reached: ${daily_pnl:.2f} exceeds -${settings.daily_loss_limit:.2f}",
+            else f"Daily loss limit reached: ${daily_pnl:.2f} exceeds -${daily_loss_limit:.2f}",
         )

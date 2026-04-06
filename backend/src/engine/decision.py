@@ -114,11 +114,30 @@ class DecisionEngine:
         session: AsyncSession,
     ) -> Decision:
         """Place bracket order and persist all related records."""
+        # Calculate position size from risk manager (auto or manual mode)
+        quantity = await self._risk_manager.calculate_position_size(
+            strategy_signal.symbol, session
+        )
+        if quantity <= 0:
+            logger.warning("Position size calculated as 0 for %s, skipping", strategy_signal.symbol.value)
+            decision = Decision(
+                signal_id=signal.id,
+                action=DecisionActionEnum.REJECT,
+                risk_evaluation=risk_eval.to_dict(),
+                decision_reasoning="Position sizing returned 0 contracts — max position already reached",
+                stop_price=stop_price,
+                target_price=target_price,
+            )
+            session.add(decision)
+            return decision
+
         decision = Decision(
             signal_id=signal.id,
             action=DecisionActionEnum.EXECUTE,
             risk_evaluation=risk_eval.to_dict(),
-            decision_reasoning=self._build_execution_reasoning(strategy_signal, stop_price, target_price),
+            decision_reasoning=self._build_execution_reasoning(
+                strategy_signal, stop_price, target_price, quantity
+            ),
             stop_price=stop_price,
             target_price=target_price,
         )
@@ -129,7 +148,7 @@ class DecisionEngine:
         bracket_result = await self._broker.place_bracket_order(
             symbol=strategy_signal.symbol,
             direction=strategy_signal.direction,
-            quantity=1,  # TODO: position sizing logic
+            quantity=quantity,
             entry_order_type="MARKET",
             entry_price=None,
             stop_price=stop_price,
@@ -143,7 +162,7 @@ class DecisionEngine:
             symbol=strategy_signal.symbol,
             side=side,
             order_type=OrderTypeEnum.MARKET,
-            quantity=1,
+            quantity=quantity,
             ib_order_id=bracket_result.entry_order_id,
             status=OrderStatusEnum.SUBMITTED,
         )
@@ -156,7 +175,7 @@ class DecisionEngine:
             symbol=strategy_signal.symbol,
             side=stop_side,
             order_type=OrderTypeEnum.STOP,
-            quantity=1,
+            quantity=quantity,
             stop_price=stop_price,
             ib_order_id=bracket_result.stop_order_id,
             status=OrderStatusEnum.SUBMITTED,
@@ -169,7 +188,7 @@ class DecisionEngine:
             symbol=strategy_signal.symbol,
             side=stop_side,
             order_type=OrderTypeEnum.LIMIT,
-            quantity=1,
+            quantity=quantity,
             limit_price=target_price,
             ib_order_id=bracket_result.target_order_id,
             status=OrderStatusEnum.SUBMITTED,
@@ -181,7 +200,7 @@ class DecisionEngine:
         position = Position(
             symbol=strategy_signal.symbol,
             direction=strategy_signal.direction,
-            quantity=1,
+            quantity=quantity,
             entry_price=snapshot.price,
             entry_timestamp=datetime.now(timezone.utc),
             entry_decision_id=decision.id,
@@ -204,11 +223,11 @@ class DecisionEngine:
         return decision
 
     def _build_execution_reasoning(
-        self, signal: StrategySignal, stop_price: float, target_price: float
+        self, signal: StrategySignal, stop_price: float, target_price: float, quantity: int = 1
     ) -> str:
         risk_desc = signal.reasoning.get("description", "")
         return (
-            f"Executing {signal.direction.value} {signal.symbol.value}: {risk_desc}. "
+            f"Executing {signal.direction.value} {quantity}x {signal.symbol.value}: {risk_desc}. "
             f"Stop at {stop_price:.2f}, target at {target_price:.2f}. "
             f"Signal strength: {signal.strength:.2f}."
         )

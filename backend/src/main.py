@@ -349,9 +349,17 @@ async def _strategy_evaluation_loop():
 
     await asyncio.sleep(5)  # Wait for market data to initialize
     logger.info("Strategy evaluation loop ready with %d strategies (waiting for engine start)", len(strategies))
+    BAR_DELAY = 2  # seconds after bar close to let data settle
 
     while True:
-        await asyncio.sleep(settings.strategy_eval_interval)
+        # Align to bar boundaries + delay
+        # e.g., 30s interval → evaluate at :02, :32 of each minute
+        now = _time.time()
+        interval = settings.strategy_eval_interval
+        next_bar = (int(now // interval) + 1) * interval + BAR_DELAY
+        sleep_time = max(1, next_bar - now)
+        await asyncio.sleep(sleep_time)
+
         if not _engine_running:
             continue
         if not ib or not ib.isConnected():
