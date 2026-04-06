@@ -300,14 +300,21 @@ async def _startup_reconciliation():
         discrepancies = []
 
         # Check: DB says open but IB has no position
+        closed_symbols = set()
         for symbol, db_pos in db_positions.items():
             if symbol not in ib_pos_map:
                 discrepancies.append(f"DB has open {db_pos.direction.value} {symbol} but IB has no position — marking closed")
                 db_pos.is_open = False
                 db_pos.exit_timestamp = _datetime.now(_tz.utc)
+                closed_symbols.add(symbol)
 
         # Check: IB has position but DB doesn't — create a Position so UI can manage it
         for symbol, ib_info in ib_pos_map.items():
+            # Skip if we just closed this symbol's DB position in the same cycle
+            # (avoids re-creating a position from stale IB data)
+            if symbol in closed_symbols:
+                discrepancies.append(f"IB reports {symbol} but DB position was just closed — skipping creation (will re-check next cycle)")
+                continue
             if symbol not in db_positions:
                 from src.db.models import DirectionEnum as _Dir, SymbolEnum as _Sym
                 direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
@@ -321,6 +328,21 @@ async def _startup_reconciliation():
                 )
                 session.add(new_pos)
                 discrepancies.append(f"IB has {direction} {symbol} x{abs(ib_info['qty'])} @ {ib_info['avg_price']:.2f} — created Position in DB for management")
+
+        # Check: DB and IB both have a position but disagree on quantity/direction
+        for symbol, ib_info in ib_pos_map.items():
+            if symbol in db_positions and symbol not in closed_symbols:
+                db_pos = db_positions[symbol]
+                ib_direction = "LONG" if ib_info["qty"] > 0 else "SHORT"
+                ib_qty = abs(ib_info["qty"])
+                if db_pos.direction.value != ib_direction or db_pos.quantity != ib_qty:
+                    discrepancies.append(
+                        f"{symbol}: DB has {db_pos.direction.value} x{db_pos.quantity} but IB has {ib_direction} x{ib_qty} — updating DB to match IB"
+                    )
+                    from src.db.models import DirectionEnum as _Dir
+                    db_pos.direction = _Dir(ib_direction)
+                    db_pos.quantity = ib_qty
+                    db_pos.entry_price = ib_info["avg_price"]
 
         # Check: DB has submitted orders that IB doesn't have
         from src.db.models import Order as OrderModel
