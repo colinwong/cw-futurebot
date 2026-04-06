@@ -283,6 +283,8 @@ async def _startup_reconciliation():
             }
 
     # Get IB open orders
+    # reqAllOpenOrders forces IB to send a fresh snapshot (openOrders() returns stale cache)
+    await run_ib(ib.reqAllOpenOrders)
     ib_orders = await run_ib(ib.openOrders)
     ib_order_ids = {o.orderId for o in ib_orders}
 

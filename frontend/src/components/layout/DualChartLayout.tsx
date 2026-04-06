@@ -86,10 +86,10 @@ function SymbolChart({
           shape: pos.direction === "LONG" ? "arrowUp" : "arrowDown",
           text: `${pos.direction} @ ${pos.entry_price.toFixed(2)}`,
         });
-        lines.push({ price: pos.entry_price, color: "#4a90d9", lineStyle: 2, title: `Entry ${pos.entry_price.toFixed(2)}` });
+        lines.push({ price: pos.entry_price, color: "#4a90d9", lineStyle: 2, title: "Entry" });
       }
-      if (pos.stop_price) lines.push({ price: pos.stop_price, color: "#ef5350", lineStyle: 2, title: `Stop ${pos.stop_price.toFixed(2)}` });
-      if (pos.target_price) lines.push({ price: pos.target_price, color: "#22d3ee", lineStyle: 2, title: `Target ${pos.target_price.toFixed(2)}` });
+      if (pos.stop_price) lines.push({ price: pos.stop_price, color: "#ef5350", lineStyle: 2, title: "Stop" });
+      if (pos.target_price) lines.push({ price: pos.target_price, color: "#22d3ee", lineStyle: 2, title: "Target" });
     }
     return { markers: m, horizontalLines: lines };
   }, [positions]);
