@@ -23,7 +23,20 @@ let savedBarSize = "1 min";
 
 export type IndicatorVisibility = { ema9: boolean; ema21: boolean; ema50: boolean; ema200: boolean; vwap: boolean };
 const defaultVis: IndicatorVisibility = { ema9: true, ema21: true, ema50: true, ema200: false, vwap: true };
-const savedIndicatorVis: Record<string, IndicatorVisibility> = {};
+
+// Persist to localStorage so settings survive page refresh
+const LS_KEY = "futurebot_indicator_vis";
+function loadSavedVis(): Record<string, IndicatorVisibility> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function persistVis(vis: Record<string, IndicatorVisibility>) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(vis)); } catch {}
+}
+const savedIndicatorVis: Record<string, IndicatorVisibility> = loadSavedVis();
 
 function SymbolChart({
   symbol,
@@ -141,6 +154,7 @@ export default function DualChartLayout() {
     setIndicatorVis((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       savedIndicatorVis[barSize] = next;
+      persistVis(savedIndicatorVis);
       return next;
     });
   }, [barSize]);
