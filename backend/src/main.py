@@ -473,7 +473,7 @@ async def _strategy_evaluation_loop():
 
                                 # Broadcast signal to UI
                                 await manager.broadcast("signal", {
-                                    "id": 0,
+                                    "id": f"live-{int(_time.time() * 1000)}",
                                     "timestamp": _datetime.now(_tz.utc).isoformat(),
                                     "strategy_name": signal.strategy_name,
                                     "symbol": symbol.value,
