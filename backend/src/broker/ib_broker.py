@@ -31,8 +31,8 @@ class IBBroker(BaseBroker):
         self._execution_callbacks: list[Callable] = []
         self._connection_callbacks: list[Callable] = []
 
-    async def _run(self, fn, *args, **kwargs):
-        """Run a sync ib_insync call in the IB thread pool."""
+    async def _run(self, fn, *args, timeout: float = 30.0, **kwargs):
+        """Run a sync ib_insync call in the IB thread pool with timeout."""
         if self._executor:
             def _call():
                 loop = asyncio.get_event_loop()
@@ -40,7 +40,10 @@ class IBBroker(BaseBroker):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                 return fn(*args, **kwargs)
-            return await asyncio.get_event_loop().run_in_executor(self._executor, _call)
+            return await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(self._executor, _call),
+                timeout=timeout,
+            )
         return fn(*args, **kwargs)
 
     async def connect(self) -> None:

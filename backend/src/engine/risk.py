@@ -91,11 +91,14 @@ class RiskManager:
                 account = await self._broker.get_account()
                 margin_per = _MARGIN_PER_CONTRACT.get(symbol, 1_500)
                 max_pct = float(db_settings.get("auto_max_position_pct", "40"))
-                usable_margin = account.buying_power * (max_pct / 100)
+                # Use balance (net liq), NOT buying_power (which includes leverage)
+                usable_margin = account.balance * (max_pct / 100)
                 auto_max = max(1, int(usable_margin / margin_per))
+                # Hard cap: never exceed 10 contracts per symbol for safety
+                auto_max = min(auto_max, 10)
                 logger.info(
-                    "Auto position sizing for %s: buying_power=%.0f, margin_per=%d, max_pct=%.1f%% → max=%d",
-                    symbol.value, account.buying_power, margin_per, max_pct, auto_max,
+                    "Auto position sizing for %s: balance=%.0f, margin_per=%d, max_pct=%.1f%% → max=%d",
+                    symbol.value, account.balance, margin_per, max_pct, auto_max,
                 )
                 return auto_max
             except Exception:

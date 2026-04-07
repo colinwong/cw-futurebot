@@ -34,7 +34,7 @@ async def list_positions(
 
     items = []
     for pos in positions:
-        protective = pos.protective_orders[0] if pos.protective_orders else None
+        protective = max(pos.protective_orders, key=lambda p: p.id) if pos.protective_orders else None
         stop_price = None
         target_price = None
         if protective:

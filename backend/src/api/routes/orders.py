@@ -142,7 +142,7 @@ async def place_bracket_order(
         quantity=req.quantity,
         limit_price=req.entry_price,
         ib_order_id=result.entry_order_id,
-        status=OrderStatusEnum.SUBMITTED,
+        status=OrderStatusEnum.FILLED,  # place_bracket_order waits for fill before returning
         is_manual=True,
     )
     stop_order = Order(
@@ -280,8 +280,8 @@ async def close_position(
             ProtectiveOrder.status == ProtectiveOrderStatusEnum.ACTIVE,
         )
     )
-    protective = prot_result.scalars().first()
-    if protective:
+    all_protectives = prot_result.scalars().all()
+    for protective in all_protectives:
         for ib_id in [protective.stop_ib_order_id, protective.target_ib_order_id]:
             if ib_id:
                 try:

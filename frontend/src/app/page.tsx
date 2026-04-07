@@ -30,14 +30,14 @@ export default function TradingTerminal() {
             <OrderEntry />
           </div>
           <div className="border-t border-gray-800 flex-1 overflow-y-auto min-h-0">
-            <ActivityLog />
+            <NewsFeed />
           </div>
         </div>
         <div className="border-r border-gray-800 overflow-y-auto">
           <SignalFeed />
         </div>
         <div className="overflow-y-auto">
-          <NewsFeed />
+          <ActivityLog />
         </div>
       </div>
     </div>

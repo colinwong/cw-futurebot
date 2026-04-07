@@ -70,12 +70,13 @@ export function useOrders() {
     setActionInProgress((p) => ({ ...p, [key]: true }));
     setError(null);
     try {
-      return await api.closePosition(symbol, positionId);
+      const result = await api.closePosition(symbol, positionId);
+      // Keep loading state on success — position will disappear when fill processes
+      return result;
     } catch (e) {
+      setActionInProgress((p) => ({ ...p, [key]: false }));
       setError(e instanceof Error ? e.message : "Close failed");
       throw e;
-    } finally {
-      setActionInProgress((p) => ({ ...p, [key]: false }));
     }
   }, []);
 

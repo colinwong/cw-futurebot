@@ -33,6 +33,7 @@ from src.db.models import (
     OrderTypeEnum,
     Position,
     ProtectiveOrder,
+    ProtectiveOrderStatusEnum,
     SentimentEnum,
     Signal,
     SystemEvent,
@@ -57,6 +58,7 @@ _news_analyzer = None
 # Dedicated thread pool for IB calls (ib_insync needs its own event loop)
 _ib_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 _thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
+_pause_sleep_loop = False  # Pause IB sleep loop during heavy operations like reqHistoricalData
 
 T = TypeVar("T")
 
@@ -179,6 +181,18 @@ async def lifespan(app: FastAPI):
     if await _connect_ib():
         await _post_connect_setup()
 
+    # Restore engine state from DB
+    global _engine_running
+    try:
+        async with async_session() as session:
+            result = await session.execute(_select(AppSetting).where(AppSetting.key == "engine_running"))
+            setting = result.scalars().first()
+            if setting and setting.value == "true":
+                _engine_running = True
+                logger.info("Restored engine state: RUNNING")
+    except Exception:
+        pass
+
     # Start ALL background loops here (once per process lifetime)
     asyncio.create_task(_strategy_evaluation_loop())
     asyncio.create_task(_start_market_data_streaming())
@@ -270,6 +284,11 @@ async def _startup_reconciliation():
     if not ib:
         return
 
+    async with _fill_lock:
+        await _do_reconciliation()
+
+
+async def _do_reconciliation():
     logger.info("Running startup reconciliation...")
 
     # Get IB positions
@@ -288,6 +307,9 @@ async def _startup_reconciliation():
     ib_orders = await run_ib(ib.openOrders)
     ib_order_ids = {o.orderId for o in ib_orders}
 
+    # Track IB order IDs we create during reconciliation so stale-order check doesn't nuke them
+    newly_placed_ib_ids = set()
+
     async with async_session() as session:
         # Get DB open positions
         result = await session.execute(
@@ -305,6 +327,25 @@ async def _startup_reconciliation():
                 db_pos.is_open = False
                 db_pos.exit_timestamp = _datetime.now(_tz.utc)
                 closed_symbols.add(symbol)
+
+                # Cancel all protective orders for this closed position
+                prot_result = await session.execute(
+                    _select(ProtectiveOrder).where(ProtectiveOrder.position_id == db_pos.id)
+                )
+                for prot in prot_result.scalars().all():
+                    prot.status = ProtectiveOrderStatusEnum.CANCELLED
+                    for prot_ib_id in [prot.stop_ib_order_id, prot.target_ib_order_id]:
+                        if prot_ib_id and prot_ib_id in ib_order_ids:
+                            try:
+                                await _broker_ref.cancel_order(prot_ib_id)
+                            except Exception:
+                                pass
+                    for oid in [prot.stop_order_id, prot.target_order_id]:
+                        if oid:
+                            ord_res = await session.execute(_select(OrderModel).where(OrderModel.id == oid))
+                            old_ord = ord_res.scalars().first()
+                            if old_ord and old_ord.status == OrderStatusEnum.SUBMITTED:
+                                old_ord.status = OrderStatusEnum.CANCELLED
 
         # Check: IB has position but DB doesn't — defer creation to avoid race with fill processing
         for symbol, ib_info in ib_pos_map.items():
@@ -355,10 +396,11 @@ async def _startup_reconciliation():
                             target_id, stop_id = await _broker_ref.place_oca_protective_orders(
                                 sym_enum, dir_enum, qty, stop_px, target_px
                             )
-                            from src.db.models import Order as _Ord, ProtectiveOrder as _PO, OrderSideEnum, OrderTypeEnum, OrderStatusEnum, ProtectiveOrderStatusEnum
-                            exit_side = OrderSideEnum.SELL if direction == "LONG" else OrderSideEnum.BUY
-                            stop_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=OrderTypeEnum.STOP, quantity=qty, stop_price=stop_px, ib_order_id=stop_id, status=OrderStatusEnum.SUBMITTED)
-                            target_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=OrderTypeEnum.LIMIT, quantity=qty, limit_price=target_px, ib_order_id=target_id, status=OrderStatusEnum.SUBMITTED)
+                            newly_placed_ib_ids.update([target_id, stop_id])
+                            from src.db.models import Order as _Ord, ProtectiveOrder as _PO, OrderSideEnum as _OSide, OrderTypeEnum as _OType, OrderStatusEnum as _OStat
+                            exit_side = _OSide.SELL if direction == "LONG" else _OSide.BUY
+                            stop_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=_OType.STOP, quantity=qty, stop_price=stop_px, ib_order_id=stop_id, status=_OStat.SUBMITTED)
+                            target_ord = _Ord(symbol=sym_enum, side=exit_side, order_type=_OType.LIMIT, quantity=qty, limit_price=target_px, ib_order_id=target_id, status=_OStat.SUBMITTED)
                             session.add_all([stop_ord, target_ord])
                             await session.flush()
                             prot = _PO(position_id=new_pos.id, stop_order_id=stop_ord.id, target_order_id=target_ord.id, stop_ib_order_id=stop_id, target_ib_order_id=target_id, verified_at=_datetime.now(_tz.utc))
@@ -396,7 +438,7 @@ async def _startup_reconciliation():
             _select(OrderModel).where(OrderModel.status == OrderStatusEnum.SUBMITTED)
         )
         for order in result.scalars().all():
-            if order.ib_order_id and order.ib_order_id not in ib_order_ids:
+            if order.ib_order_id and order.ib_order_id not in ib_order_ids and order.ib_order_id not in newly_placed_ib_ids:
                 discrepancies.append(f"DB order {order.ib_order_id} ({order.side.value} {order.symbol.value}) is SUBMITTED but not at IB — marking cancelled")
                 order.status = OrderStatusEnum.CANCELLED
 
@@ -418,17 +460,38 @@ async def _startup_reconciliation():
             open_positions = result.scalars().all()
 
             for pos in open_positions:
-                # Check if this position has active protective orders at IB
+                # Check if this position has ACTIVE protective orders at IB
                 has_live_stop = False
                 has_live_target = False
-                if pos.protective_orders:
-                    prot = pos.protective_orders[0]
-                    if prot.stop_ib_order_id and prot.stop_ib_order_id in ib_order_ids:
+                active_prots = [p for p in pos.protective_orders if p.status == ProtectiveOrderStatusEnum.ACTIVE]
+                latest_prot = max(active_prots, key=lambda p: p.id) if active_prots else None
+                if latest_prot:
+                    all_known_ids = ib_order_ids | newly_placed_ib_ids
+                    if latest_prot.stop_ib_order_id and latest_prot.stop_ib_order_id in all_known_ids:
                         has_live_stop = True
-                    if prot.target_ib_order_id and prot.target_ib_order_id in ib_order_ids:
+                    if latest_prot.target_ib_order_id and latest_prot.target_ib_order_id in all_known_ids:
                         has_live_target = True
 
                 if not has_live_stop or not has_live_target:
+                    # Deactivate ALL old protective orders (DB + IB) before placing new ones
+                    for old_prot in pos.protective_orders:
+                        # Cancel at IB if still live
+                        for old_ib_id in [old_prot.stop_ib_order_id, old_prot.target_ib_order_id]:
+                            if old_ib_id and old_ib_id in ib_order_ids:
+                                try:
+                                    await _broker_ref.cancel_order(old_ib_id)
+                                except Exception:
+                                    pass
+                        # Mark DB record as cancelled
+                        old_prot.status = ProtectiveOrderStatusEnum.CANCELLED
+                        # Mark linked DB orders as cancelled
+                        for oid in [old_prot.stop_order_id, old_prot.target_order_id]:
+                            if oid:
+                                ord_res = await session.execute(_select(OrderModel).where(OrderModel.id == oid))
+                                old_ord = ord_res.scalars().first()
+                                if old_ord and old_ord.status == OrderStatusEnum.SUBMITTED:
+                                    old_ord.status = OrderStatusEnum.CANCELLED
+
                     # Position is naked — re-place protective orders using default ticks
                     spec = FUTURES_CONTRACTS.get(pos.symbol, {})
                     tick_size = spec.get("tick_size", 0.25)
@@ -450,6 +513,7 @@ async def _startup_reconciliation():
                             stop_price=stop_price,
                             target_price=target_price,
                         )
+                        newly_placed_ib_ids.update([target_id, stop_id])
 
                         # Create DB records for the new protective orders
                         stop_side = OrderSideEnum.SELL if pos.direction == DirectionEnum.LONG else OrderSideEnum.BUY
@@ -543,20 +607,23 @@ async def _strategy_evaluation_loop():
 
         await manager.broadcast("system", {"event": "engine_eval_start", "interval": settings.strategy_eval_interval})
 
-        for symbol in (SymbolEnum.MES, SymbolEnum.MNQ):
+        for sym_idx, symbol in enumerate((SymbolEnum.MES, SymbolEnum.MNQ)):
+            if sym_idx > 0:
+                await asyncio.sleep(2)  # IB pacing: wait between historical data requests
             try:
                 contract = make_ib_contract(symbol)
                 try:
                     await run_ib(ib.qualifyContracts, contract, timeout=5.0)
-                    bars = await run_ib(
-                        ib.reqHistoricalData,
-                        contract,
-                        endDateTime="",
-                        durationStr="2 D",
-                        barSizeSetting="5 mins",
-                        whatToShow="TRADES",
-                        useRTH=False,
-                        formatDate=2,
+                    bars = await asyncio.wait_for(
+                        ib.reqHistoricalDataAsync(
+                            contract,
+                            endDateTime="",
+                            durationStr="2 D",
+                            barSizeSetting="5 mins",
+                            whatToShow="TRADES",
+                            useRTH=False,
+                            formatDate=2,
+                        ),
                         timeout=30.0,
                     )
                 except asyncio.TimeoutError:
@@ -564,7 +631,10 @@ async def _strategy_evaluation_loop():
                     continue
 
                 if not bars or len(bars) < 50:
+                    logger.warning("Insufficient bars for %s: got %d (need 50)", symbol.value, len(bars) if bars else 0)
                     continue
+
+                logger.info("Got %d bars for %s, last price=%.2f", len(bars), symbol.value, bars[-1].close)
 
                 # Convert to dicts for indicator computation
                 bar_dicts = [
@@ -574,6 +644,7 @@ async def _strategy_evaluation_loop():
 
                 indicators = compute_indicators(bar_dicts)
                 if not indicators:
+                    logger.warning("Indicator computation returned empty for %s", symbol.value)
                     continue
 
                 last_bar = bars[-1]
@@ -662,9 +733,10 @@ async def _strategy_evaluation_loop():
                                     actual_reasoning = "; ".join(f"{c.name}: {c.message}" for c in failed)
                                     actual_action = "REJECT"
                                 elif trading_mode == "live" and decision_engine:
-                                    await decision_engine.process_signal(signal, snapshot, session)
-                                    actual_action = "EXECUTE"
-                                    actual_reasoning = "Executed"
+                                    # process_signal creates its own Signal + Decision records
+                                    dec = await decision_engine.process_signal(signal, snapshot, session)
+                                    actual_action = dec.action.value
+                                    actual_reasoning = dec.decision_reasoning
                                 else:
                                     actual_action = "DEFER"
                                     actual_reasoning = "Signal-only mode"
@@ -673,27 +745,29 @@ async def _strategy_evaluation_loop():
                                 if actual_action == "REJECT":
                                     continue
 
-                                # Persist signal + decision (only EXECUTE and DEFER)
-                                sig_record = Signal(
-                                    snapshot_id=snapshot.id,
-                                    strategy_name=signal.strategy_name,
-                                    symbol=signal.symbol,
-                                    direction=signal.direction,
-                                    strength=signal.strength,
-                                    reasoning=signal.reasoning,
-                                )
-                                session.add(sig_record)
-                                await session.flush()
+                                # Persist signal + decision ONLY for non-EXECUTE paths
+                                # (EXECUTE path already persisted by decision_engine.process_signal)
+                                if actual_action != "EXECUTE":
+                                    sig_record = Signal(
+                                        snapshot_id=snapshot.id,
+                                        strategy_name=signal.strategy_name,
+                                        symbol=signal.symbol,
+                                        direction=signal.direction,
+                                        strength=signal.strength,
+                                        reasoning=signal.reasoning,
+                                    )
+                                    session.add(sig_record)
+                                    await session.flush()
 
-                                dec_record = Decision(
-                                    signal_id=sig_record.id,
-                                    action=DecisionActionEnum(actual_action),
-                                    risk_evaluation=risk_eval.to_dict(),
-                                    decision_reasoning=actual_reasoning,
-                                    stop_price=stop_price,
-                                    target_price=target_price,
-                                )
-                                session.add(dec_record)
+                                    dec_record = Decision(
+                                        signal_id=sig_record.id,
+                                        action=DecisionActionEnum(actual_action),
+                                        risk_evaluation=risk_eval.to_dict(),
+                                        decision_reasoning=actual_reasoning,
+                                        stop_price=stop_price,
+                                        target_price=target_price,
+                                    )
+                                    session.add(dec_record)
 
                                 # Broadcast signal to UI
                                 await manager.broadcast("signal", {
@@ -731,13 +805,21 @@ async def _periodic_reconciliation_loop():
             logger.exception("Error in periodic reconciliation")
 
 
+_fill_lock = asyncio.Lock()
+_prev_order_status_handler = None
+
 def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
-    """Register IB callbacks to track order fills, update positions, and broadcast events."""
+    """Register IB callbacks to track order fills and cancellations."""
+    global _prev_order_status_handler
     if not ib:
         return
 
-    # Clear old handlers to prevent callback accumulation on reconnect
-    ib.orderStatusEvent.clear()
+    # Remove only OUR previous handler (don't nuke ib_insync internals)
+    if _prev_order_status_handler is not None:
+        try:
+            ib.orderStatusEvent -= _prev_order_status_handler
+        except ValueError:
+            pass
 
     from src.db.models import DirectionEnum as _Dir, TradeOutcome
     from src.contracts import FUTURES_CONTRACTS
@@ -751,128 +833,177 @@ def _setup_fill_tracking(main_loop: asyncio.AbstractEventLoop):
             filled_qty = int(trade.orderStatus.filled)
 
             async def _process_fill():
-                try:
-                    async with async_session() as session:
-                        result = await session.execute(
-                            _select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
-                        )
-                        order = result.scalars().first()
-                        if not order:
-                            logger.warning("Fill for unknown ib_order_id %d — skipping", ib_order_id)
-                            return
+                async with _fill_lock:
+                    try:
+                        async with async_session() as session:
+                            # Retry up to 3 times — order may not be committed yet
+                            order = None
+                            for attempt in range(3):
+                                result = await session.execute(
+                                    _select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
+                                )
+                                order = result.scalars().first()
+                                if order:
+                                    break
+                                if attempt < 2:
+                                    await asyncio.sleep(1)
 
-                        # Update order status
-                        order.status = OrderStatusEnum.FILLED
-                        order.filled_at = _datetime.now(_tz.utc)
+                            if not order:
+                                logger.warning("Fill for unknown ib_order_id %d after 3 retries — skipping", ib_order_id)
+                                return
 
-                        # Create Fill record
-                        fill = Fill(
-                            order_id=order.id,
-                            fill_price=fill_price,
-                            quantity=filled_qty,
-                            commission=0.0,
-                            slippage=0.0,
-                            ib_execution_id=str(ib_order_id),
-                        )
-                        session.add(fill)
+                            # Update order status
+                            order.status = OrderStatusEnum.FILLED
+                            order.filled_at = _datetime.now(_tz.utc)
 
-                        # Determine if this is an ENTRY fill or EXIT fill
-                        # Entry: position with entry_price=0 and matching symbol (unfilled entry)
-                        # Exit: position that is open, and this order is the opposite side
-                        pos_updated = False
-
-                        # Check for entry fill (position with no entry price yet)
-                        entry_pos_result = await session.execute(
-                            _select(Position).where(
-                                Position.symbol == order.symbol,
-                                Position.is_open.is_(True),
-                                Position.entry_price == 0,
+                            # Create Fill record
+                            fill = Fill(
+                                order_id=order.id,
+                                fill_price=fill_price,
+                                quantity=filled_qty,
+                                commission=0.0,
+                                slippage=0.0,
+                                ib_execution_id=str(ib_order_id),
                             )
-                        )
-                        entry_pos = entry_pos_result.scalars().first()
-                        if entry_pos:
-                            entry_pos.entry_price = fill_price
-                            entry_pos.entry_timestamp = _datetime.now(_tz.utc)
-                            logger.info("Entry fill: Position %d %s @ %.2f", entry_pos.id, entry_pos.symbol.value, fill_price)
-                            pos_updated = True
+                            session.add(fill)
 
-                        # Check for exit fill (close order for an open position)
-                        if not pos_updated:
-                            # Exit fill: find open position where this order closes it
-                            # (opposite side — BUY closes SHORT, SELL closes LONG)
-                            if order.side.value == "BUY":
-                                exit_dir = _Dir.SHORT
-                            else:
-                                exit_dir = _Dir.LONG
+                            # Determine if this is an ENTRY fill or EXIT fill
+                            pos_updated = False
 
-                            exit_pos_result = await session.execute(
+                            # Check for entry fill (position with entry_price=0)
+                            entry_pos_result = await session.execute(
                                 _select(Position).where(
                                     Position.symbol == order.symbol,
-                                    Position.direction == exit_dir,
                                     Position.is_open.is_(True),
+                                    Position.entry_price == 0,
                                 )
                             )
-                            exit_pos = exit_pos_result.scalars().first()
-                            if exit_pos:
-                                exit_pos.is_open = False
-                                exit_pos.exit_price = fill_price
-                                exit_pos.exit_timestamp = _datetime.now(_tz.utc)
-
-                                # Calculate P&L
-                                if exit_pos.entry_price > 0:
-                                    spec = FUTURES_CONTRACTS.get(exit_pos.symbol)
-                                    multiplier = spec["multiplier"] if spec else 50
-                                    if exit_pos.direction == _Dir.LONG:
-                                        pnl = (fill_price - exit_pos.entry_price) * multiplier * exit_pos.quantity
-                                    else:
-                                        pnl = (exit_pos.entry_price - fill_price) * multiplier * exit_pos.quantity
-
-                                    hold_secs = int((exit_pos.exit_timestamp - exit_pos.entry_timestamp).total_seconds())
-                                    outcome = TradeOutcome(
-                                        position_id=exit_pos.id,
-                                        pnl=pnl,
-                                        hold_duration_seconds=hold_secs,
-                                    )
-                                    session.add(outcome)
-                                    logger.info("Exit fill: Position %d closed @ %.2f, P&L=$%.2f", exit_pos.id, fill_price, pnl)
-                                else:
-                                    logger.info("Exit fill: Position %d closed @ %.2f (no entry price, P&L unknown)", exit_pos.id, fill_price)
+                            entry_pos = entry_pos_result.scalars().first()
+                            if entry_pos:
+                                entry_pos.entry_price = fill_price
+                                entry_pos.entry_timestamp = _datetime.now(_tz.utc)
+                                logger.info("Entry fill: Position %d %s @ %.2f", entry_pos.id, entry_pos.symbol.value, fill_price)
                                 pos_updated = True
 
-                        await session.commit()
-                        logger.info("Fill recorded: ib_order=%d, price=%.2f, qty=%d", ib_order_id, fill_price, filled_qty)
+                            # Check for exit fill
+                            if not pos_updated:
+                                if order.side.value == "BUY":
+                                    exit_dir = _Dir.SHORT
+                                else:
+                                    exit_dir = _Dir.LONG
 
-                        # Broadcast ALL relevant events to UI
-                        await manager.broadcast("order", {
-                            "action": "filled",
-                            "ib_order_id": ib_order_id,
-                            "symbol": order.symbol.value,
-                            "side": order.side.value,
-                            "fill_price": fill_price,
-                            "quantity": filled_qty,
-                        })
-                        await manager.broadcast("position", {"action": "updated"})
+                                exit_pos_result = await session.execute(
+                                    _select(Position).where(
+                                        Position.symbol == order.symbol,
+                                        Position.direction == exit_dir,
+                                        Position.is_open.is_(True),
+                                    )
+                                )
+                                exit_pos = exit_pos_result.scalars().first()
+                                if exit_pos:
+                                    exit_pos.is_open = False
+                                    exit_pos.exit_price = fill_price
+                                    exit_pos.exit_timestamp = _datetime.now(_tz.utc)
 
-                        # Broadcast account update so P&L reflects immediately
-                        try:
-                            summary = await run_ib(ib.accountSummary)
-                            values = {}
-                            for item in summary:
-                                values[item.tag] = item.value
-                            await manager.broadcast("account", {
-                                "balance": float(values.get("NetLiquidation", 0)),
-                                "unrealized_pnl": float(values.get("UnrealizedPnL", 0)),
-                                "realized_pnl": float(values.get("RealizedPnL", 0)),
-                                "margin_used": float(values.get("InitMarginReq", 0)),
-                                "buying_power": float(values.get("BuyingPower", 0)),
+                                    # Cancel ALL protective orders for this position
+                                    prot_result = await session.execute(
+                                        _select(ProtectiveOrder).where(
+                                            ProtectiveOrder.position_id == exit_pos.id,
+                                        )
+                                    )
+                                    for prot in prot_result.scalars().all():
+                                        for prot_ib_id in [prot.stop_ib_order_id, prot.target_ib_order_id]:
+                                            if prot_ib_id and prot_ib_id != ib_order_id:
+                                                try:
+                                                    await _broker_ref.cancel_order(prot_ib_id)
+                                                except Exception:
+                                                    pass
+                                        prot.status = ProtectiveOrderStatusEnum.CANCELLED
+                                        for oid in [prot.stop_order_id, prot.target_order_id]:
+                                            if oid:
+                                                o_res = await session.execute(_select(OrderModel).where(OrderModel.id == oid))
+                                                linked_ord = o_res.scalars().first()
+                                                if linked_ord and linked_ord.status == OrderStatusEnum.SUBMITTED:
+                                                    if linked_ord.ib_order_id == ib_order_id:
+                                                        linked_ord.status = OrderStatusEnum.FILLED
+                                                    else:
+                                                        linked_ord.status = OrderStatusEnum.CANCELLED
+
+                                    # Calculate P&L
+                                    if exit_pos.entry_price > 0:
+                                        spec = FUTURES_CONTRACTS.get(exit_pos.symbol)
+                                        multiplier = spec["multiplier"] if spec else 50
+                                        if exit_pos.direction == _Dir.LONG:
+                                            pnl = (fill_price - exit_pos.entry_price) * multiplier * exit_pos.quantity
+                                        else:
+                                            pnl = (exit_pos.entry_price - fill_price) * multiplier * exit_pos.quantity
+
+                                        hold_secs = int((exit_pos.exit_timestamp - exit_pos.entry_timestamp).total_seconds())
+                                        outcome = TradeOutcome(
+                                            position_id=exit_pos.id,
+                                            pnl=pnl,
+                                            hold_duration_seconds=hold_secs,
+                                        )
+                                        session.add(outcome)
+                                        logger.info("Exit fill: Position %d closed @ %.2f, P&L=$%.2f", exit_pos.id, fill_price, pnl)
+                                    else:
+                                        logger.info("Exit fill: Position %d closed @ %.2f (no entry price, P&L unknown)", exit_pos.id, fill_price)
+                                    pos_updated = True
+
+                            await session.commit()
+                            logger.info("Fill recorded: ib_order=%d, price=%.2f, qty=%d", ib_order_id, fill_price, filled_qty)
+
+                            # Broadcast events to UI
+                            await manager.broadcast("order", {
+                                "action": "filled",
+                                "ib_order_id": ib_order_id,
+                                "symbol": order.symbol.value,
+                                "side": order.side.value,
+                                "fill_price": fill_price,
+                                "quantity": filled_qty,
                             })
-                        except Exception:
-                            pass  # Account update is best-effort
+                            await manager.broadcast("position", {"action": "updated"})
 
-                except Exception:
-                    logger.exception("Error processing fill for ib_order=%d", ib_order_id)
+                            try:
+                                summary = await run_ib(ib.accountSummary)
+                                values = {}
+                                for item in summary:
+                                    values[item.tag] = item.value
+                                await manager.broadcast("account", {
+                                    "balance": float(values.get("NetLiquidation", 0)),
+                                    "unrealized_pnl": float(values.get("UnrealizedPnL", 0)),
+                                    "realized_pnl": float(values.get("RealizedPnL", 0)),
+                                    "margin_used": float(values.get("InitMarginReq", 0)),
+                                    "buying_power": float(values.get("BuyingPower", 0)),
+                                })
+                            except Exception:
+                                pass
+
+                    except Exception:
+                        logger.exception("Error processing fill for ib_order=%d", ib_order_id)
 
             asyncio.run_coroutine_threadsafe(_process_fill(), main_loop)
+
+        elif status in ("Cancelled", "Inactive", "ApiCancelled"):
+            # Track IB cancellations in DB so reconciliation doesn't re-place them
+            async def _process_cancel():
+                async with _fill_lock:
+                    try:
+                        async with async_session() as session:
+                            result = await session.execute(
+                                _select(OrderModel).where(OrderModel.ib_order_id == ib_order_id)
+                            )
+                            order = result.scalars().first()
+                            if order and order.status == OrderStatusEnum.SUBMITTED:
+                                order.status = OrderStatusEnum.CANCELLED
+                                await session.commit()
+                                logger.info("Order %d (ib=%d) cancelled at IB", order.id, ib_order_id)
+                    except Exception:
+                        logger.exception("Error processing cancel for ib_order=%d", ib_order_id)
+
+            asyncio.run_coroutine_threadsafe(_process_cancel(), main_loop)
+
+    _prev_order_status_handler = _on_order_status
 
     def _register():
         ib.orderStatusEvent += _on_order_status
@@ -962,7 +1093,13 @@ async def _start_market_data_streaming():
     # Keep IB event loop running to process callbacks + flush candles periodically
     async def _ib_sleep_loop():
         while ib and ib.isConnected():
-            await run_ib(ib.sleep, 0.1)
+            if _pause_sleep_loop:
+                await asyncio.sleep(0.5)
+                continue
+            try:
+                await run_ib(ib.sleep, 0.1, timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
 
             # Flush any stale candles (older than interval)
             now = _time.time()
@@ -972,7 +1109,7 @@ async def _start_market_data_streaming():
                     await manager.broadcast("candle", cur)
                     del _current_candles[sym]
 
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)  # Yield more time for other IB operations
 
     asyncio.create_task(_ib_sleep_loop())
 
@@ -1028,6 +1165,15 @@ async def start_engine():
     """Start the algo trading engine."""
     global _engine_running
     _engine_running = True
+    # Persist so it survives restarts/reloads
+    async with async_session() as session:
+        result = await session.execute(_select(AppSetting).where(AppSetting.key == "engine_running"))
+        setting = result.scalars().first()
+        if setting:
+            setting.value = "true"
+        else:
+            session.add(AppSetting(key="engine_running", value="true"))
+        await session.commit()
     logger.info("Algo engine STARTED")
     await manager.broadcast("system", {"event": "engine_started"})
     return {"status": "running"}
@@ -1038,6 +1184,14 @@ async def stop_engine():
     """Stop the algo trading engine."""
     global _engine_running
     _engine_running = False
+    async with async_session() as session:
+        result = await session.execute(_select(AppSetting).where(AppSetting.key == "engine_running"))
+        setting = result.scalars().first()
+        if setting:
+            setting.value = "false"
+        else:
+            session.add(AppSetting(key="engine_running", value="false"))
+        await session.commit()
     logger.info("Algo engine STOPPED")
     await manager.broadcast("system", {"event": "engine_stopped"})
     return {"status": "stopped"}
